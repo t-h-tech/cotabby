@@ -2,11 +2,12 @@ import CoreGraphics
 import Foundation
 
 /// File overview:
-/// Shared value types for suggestion configuration, prompt requests, normalized results,
-/// and overlay state. This file is the contract boundary between focus capture,
-/// generation orchestration, runtime inference, and UI rendering.
+/// Defines the pure value types that describe Tabby's autocomplete domain:
+/// configuration, generation requests, normalized model output, active suggestion sessions,
+/// and overlay visibility.
 ///
-/// Debug defaults live in one place so the first prediction slice has deterministic behavior.
+/// This file is intentionally free of AppKit, AX, and runtime side effects so maintainers can
+/// understand the core state machine without reading OS integration code first.
 
 /// User-facing presets that bound how long one inline suggestion may be.
 /// Treating this as an enum keeps the UI and prompt policy in one source of truth.
@@ -83,6 +84,9 @@ enum SuggestionPromptMode: String, CaseIterable, Equatable, Hashable, Sendable, 
     }
 }
 
+/// Runtime knobs for the inline-completion pipeline.
+/// Keeping these in one struct makes it easier to reason about product defaults versus
+/// experimental tuning without scattering magic numbers through the coordinator.
 struct SuggestionConfiguration: Equatable, Sendable {
     let maxPredictionTokens: Int
     let debounceMilliseconds: Int
@@ -98,20 +102,23 @@ struct SuggestionConfiguration: Equatable, Sendable {
     let defaultWordCountPreset: SuggestionWordCountPreset
     let defaultPromptMode: SuggestionPromptMode
 
-    static let debugDefaults = SuggestionConfiguration(
-        // Simple fast inline completion prediction size
+    /// The configuration shipped by the app today.
+    /// These are product defaults, not temporary debug overrides.
+    static let standard = SuggestionConfiguration(
+        // Keep completions short so ghost text stays fast and easy to accept.
         maxPredictionTokens: 8,
-        // Very small debounces feel fast, but many host apps do not update their AX text state
-        // within a single frame. A more conservative delay improves prompt freshness.
+        // Many host apps do not publish updated AX text/caret state in the same frame as typing.
+        // A slightly slower debounce gives the model fresher context and avoids obvious staleness.
         debounceMilliseconds: 180,
-        // Match the working ollama cURL parameters
+        // Low temperature keeps inline completions stable and less likely to drift.
         temperature: 0.1,
         topK: 20,
         topP: 0.7,
         minP: 0.08,
         repetitionPenalty: 1.05,
         maxPrefixWords: 10,
-        // Prompt windows should stay small. Sending an entire Xcode buffer kills latency for no gain.
+        // Prompt windows should stay small. Sending an entire editor buffer hurts latency with
+        // little quality gain because Tabby is only completing the immediate local continuation.
         maxPrefixCharacters: 400,
         maxSuffixCharacters: 192,
         customAIInstructions: "Continue the text naturally in the same tone and context.",
@@ -242,6 +249,8 @@ struct ActiveSuggestionSession: Equatable, Sendable {
         remainingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Returns a new session advanced by the accepted or typed character count.
+    /// The original value stays unchanged because this type models immutable interaction state.
     func advancing(by consumedCharacters: Int) -> ActiveSuggestionSession {
         ActiveSuggestionSession(
             baseContext: baseContext,
@@ -253,6 +262,8 @@ struct ActiveSuggestionSession: Equatable, Sendable {
         )
     }
 
+    /// Rebuilds the session from a fully observed live editor state during reconciliation.
+    /// This is useful when AX catches up after optimistic UI updates such as partial Tab accepts.
     func withConsumedCharacters(_ consumedCharacters: Int) -> ActiveSuggestionSession {
         ActiveSuggestionSession(
             baseContext: baseContext,
@@ -367,6 +378,7 @@ enum SuggestionClientError: LocalizedError {
 private extension String {
     /// Swift `String` is a collection of extended grapheme clusters, not bytes.
     /// These helpers slice by user-visible characters so emoji and composed characters stay intact.
+    /// That matters because autocomplete acceptance is a user-facing action, not a byte-level one.
     func leadingCharacters(_ count: Int) -> String {
         String(prefix(max(count, 0)))
     }

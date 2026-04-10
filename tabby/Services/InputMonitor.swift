@@ -7,7 +7,11 @@ import Foundation
 /// input-event vocabulary.
 ///
 /// Only the event categories needed for typing-triggered prediction are modeled here.
+/// The rest of the app should reason about semantic events like "navigation" or "text mutation",
+/// not low-level macOS key codes.
 struct CapturedInputEvent: Equatable {
+    /// This enum is intentionally smaller than the raw CGEvent universe.
+    /// A reduced vocabulary makes the suggestion state machine easier to test and reason about.
     enum Kind: String, Equatable {
         case tab
         case textMutation
@@ -25,6 +29,8 @@ struct CapturedInputEvent: Equatable {
     var shouldSchedulePrediction: Bool {
         switch kind {
         case .textMutation:
+            // Tabby generates after a completed word boundary, not on every character,
+            // to avoid prompting from half-typed fragments.
             return keyCode == 49 || characters.hasTrailingSpaceBoundary
         case .shortcutMutation:
             return true
@@ -98,6 +104,8 @@ final class InputMonitor {
             }
 
             let monitor = Unmanaged<InputMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+            // The CGEvent tap callback is a C function pointer. `assumeIsolated` tells Swift that
+            // we are deliberately hopping back onto this `@MainActor` object before touching state.
             return MainActor.assumeIsolated {
                 monitor.handleTap(type: type, event: event)
             }
@@ -147,6 +155,8 @@ final class InputMonitor {
     private func handleTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            // macOS may disable a tap if the callback runs too slowly or during certain system events.
+            // Re-enabling keeps the monitor self-healing instead of silently dying.
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
@@ -173,6 +183,7 @@ final class InputMonitor {
         let flags = event.flags
         let characters = event.unicodeString
 
+        // Key code 48 is the hardware Tab key on macOS keyboard events.
         if keyCode == 48, flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty {
             return CapturedInputEvent(kind: .tab, keyCode: keyCode, characters: characters, flags: flags)
         }
@@ -214,7 +225,8 @@ private extension CGEvent {
         }
 
         // Core Graphics fills a caller-provided UTF-16 buffer here, so we allocate manually and
-        // then construct a Swift String from those code units.
+        // then construct a Swift `String` from those code units. This is one of the common places
+        // where Swift code still has to interact with C-style memory management explicitly.
         let buffer = UnsafeMutablePointer<UniChar>.allocate(capacity: length)
         defer {
             buffer.deallocate()

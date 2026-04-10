@@ -6,6 +6,8 @@ import Foundation
 /// Polls the Accessibility tree, gathers nearby candidate elements, and reduces them into one
 /// stable `FocusSnapshot`. This is the boundary where raw AX data becomes app-friendly focus state.
 ///
+/// The tracker recomputes truth from the OS on each poll instead of maintaining a complex local
+/// cache. That trades some efficiency for a much simpler and more reliable mental model.
 private struct AXFocusCandidate {
     let elementIdentifier: String
     let role: String
@@ -178,6 +180,8 @@ final class FocusTracker {
         }
 
         let value = resolvedCandidate.textValue ?? ""
+        // `NSRange` coming from AX is expressed in UTF-16 code units, which is why the code below
+        // uses `NSString` instead of slicing a native Swift `String` directly.
         guard selection.location <= value.utf16.count else {
             return FocusSnapshot(
                 applicationName: applicationName,
@@ -276,6 +280,13 @@ final class FocusTracker {
             currentElement = parent
         }
 
+        // The heuristic search order is:
+        // 1. focused node
+        // 2. a couple of ancestors
+        // 3. children of those nodes
+        //
+        // This is a pragmatic compromise for apps that focus a wrapper element instead of the real
+        // editable text node. We do not try to walk the entire AX tree.
         for node in [focusedElement] + ancestors {
             for child in AXHelper.childElements(of: node) {
                 append(child)
@@ -437,6 +448,8 @@ final class FocusTracker {
 
     /// Detects secure inputs so Tabby can intentionally refuse to operate in sensitive fields.
     private func isSecureElement(element: AXUIElement, role: String, subrole: String?) -> Bool {
+        // There is no single universal secure-input flag across all host apps, so we fall back to
+        // conservative string matching on the AX metadata that browsers and native apps commonly expose.
         let secureMarkers = [
             role.lowercased(),
             subrole?.lowercased() ?? "",

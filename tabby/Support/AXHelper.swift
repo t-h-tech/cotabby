@@ -3,12 +3,12 @@ import ApplicationServices
 import Foundation
 
 /// File overview:
-/// Wraps the low-level Accessibility APIs behind Swift-friendly helpers for typed values,
-/// tree traversal, element identity, and coordinate normalization. This file intentionally
-/// contains the "ugly edge" of interacting with AX.
+/// Wraps macOS Accessibility APIs behind Swift-friendly helpers for typed values, tree traversal,
+/// element identity, and coordinate normalization.
 ///
-/// Wraps raw Accessibility APIs so the rest of the codebase can stay mostly Swift-native.
-/// AX APIs traffic in loosely typed Core Foundation values, so this file is intentionally the "ugly edge".
+/// This file is intentionally the "ugly edge" of the app. Accessibility APIs are Core Foundation
+/// APIs, so they use loosely typed `CFTypeRef` values, C functions, and platform quirks that we do
+/// not want spread throughout the rest of the codebase.
 enum AXHelper {
     private static let knownEditableRoles: Set<String> = [
         kAXTextFieldRole as String,
@@ -25,6 +25,9 @@ enum AXHelper {
         kAXMenuItemRole as String,
     ]
 
+    /// Returns the AX attribute names exposed by an element.
+    /// These lists let higher-level code feature-detect capabilities instead of assuming that
+    /// every app exposes the same Accessibility surface.
     static func attributeNames(on element: AXUIElement) -> [String] {
         var names: CFArray?
         let result = AXUIElementCopyAttributeNames(element, &names)
@@ -35,6 +38,8 @@ enum AXHelper {
         return names as? [String] ?? []
     }
 
+    /// Returns the parameterized AX attribute names exposed by an element.
+    /// Parameterized attributes are queries such as "bounds for this text range".
     static func parameterizedAttributeNames(on element: AXUIElement) -> [String] {
         var names: CFArray?
         let result = AXUIElementCopyParameterizedAttributeNames(element, &names)
@@ -78,6 +83,7 @@ enum AXHelper {
             return nil
         }
 
+        // Safe because we already checked the Core Foundation type id above.
         let axValue = rawValue as! AXValue
         guard AXValueGetType(axValue) == .cfRange else {
             return nil
@@ -99,6 +105,7 @@ enum AXHelper {
             return nil
         }
 
+        // Safe because we already checked the Core Foundation type id above.
         let axValue = rawValue as! AXValue
         guard AXValueGetType(axValue) == .cgRect else {
             return nil
@@ -129,6 +136,7 @@ enum AXHelper {
             return nil
         }
 
+        // Safe because we already checked the Core Foundation type id above.
         let axValue = value as! AXValue
         guard AXValueGetType(axValue) == .cgRect else {
             return nil
@@ -170,6 +178,7 @@ enum AXHelper {
             return nil
         }
         
+        // Safe because we already checked the Core Foundation type id above.
         let axBounds = bounds as! AXValue
         guard AXValueGetType(axBounds) == .cgRect else {
             return nil
@@ -183,6 +192,8 @@ enum AXHelper {
         return rect
     }
 
+    /// Reads a raw AX attribute value and leaves type interpretation to the caller.
+    /// This is the lowest-level helper in the file; the typed helpers above build on top of it.
     static func copyAttributeValue(_ attribute: CFString, on element: AXUIElement) -> AnyObject? {
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(element, attribute, &value)
@@ -206,10 +217,12 @@ enum AXHelper {
             return nil
         }
 
-        // `AXUIElement` is a Core Foundation type, so this cast stays in the CF world rather than Swift class casting.
+        // `AXUIElement` is a Core Foundation type, not a normal Swift class.
+        // `unsafeBitCast` is appropriate here because we already verified the runtime type id.
         return unsafeBitCast(element, to: AXUIElement.self)
     }
 
+    /// Returns the parent AX node when the current element exposes one.
     static func parentElement(of element: AXUIElement) -> AXUIElement? {
         guard let value = copyAttributeValue(kAXParentAttribute as CFString, on: element) else {
             return nil
@@ -219,9 +232,13 @@ enum AXHelper {
             return nil
         }
 
+        // Same Core Foundation bridging rule as `focusedElement()`.
         return unsafeBitCast(value, to: AXUIElement.self)
     }
 
+    /// Returns the immediate AX children for the current element.
+    /// The result may be empty either because the node has no children or because the host app
+    /// simply does not expose them through Accessibility.
     static func childElements(of element: AXUIElement) -> [AXUIElement] {
         guard let values = copyAttributeValue(kAXChildrenAttribute as CFString, on: element) as? [AnyObject] else {
             return []
@@ -232,6 +249,7 @@ enum AXHelper {
                 return nil
             }
 
+            // Same Core Foundation bridging rule as `focusedElement()`.
             return unsafeBitCast(value, to: AXUIElement.self)
         }
     }

@@ -6,6 +6,9 @@ import LlamaSwift
 /// Owns the in-process llama.cpp runtime. The private actor handles raw model/context lifecycle
 /// and generation, while the observable manager republishes bootstrap state and diagnostics to the app.
 ///
+/// This file intentionally has two layers:
+/// - `LlamaRuntimeCore` serializes all direct llama.cpp access behind an actor.
+/// - `LlamaRuntimeManager` adapts that actor into `@Published` UI-facing state for SwiftUI.
 nonisolated private let llamaSilencedLogCallback: ggml_log_callback = { _, _, _ in }
 
 /// Immutable runtime metadata captured after a model has been successfully prepared.
@@ -357,6 +360,8 @@ private actor LlamaRuntimeCore {
 }
 
 /// Publishes runtime diagnostics for the UI and delegates expensive inference work to the core actor.
+/// `@MainActor` keeps the published state SwiftUI-friendly while the heavy inference work still runs
+/// inside the private actor.
 @MainActor
 final class LlamaRuntimeManager: ObservableObject {
     @Published private(set) var state: RuntimeBootstrapState = .idle
@@ -490,6 +495,8 @@ final class LlamaRuntimeManager: ObservableObject {
         }
 
         if let startupTask {
+            // Deduplicate concurrent prepare calls for the same selected model, but cancel and
+            // replace the task if the requested model changed while startup was already in flight.
             if startupModelFilename == requestedModelFilename {
                 return try await awaitPreparedRuntime(startupTask)
             }
@@ -557,6 +564,8 @@ final class LlamaRuntimeManager: ObservableObject {
         _ startupTask: Task<PreparedLlamaRuntime, Error>
     ) async throws -> PreparedLlamaRuntime {
         do {
+            // `Task.value` rethrows if startup failed; the manager converts those failures into
+            // user-facing bootstrap state below.
             let preparedRuntime = try await startupTask.value
             cachedRuntime = preparedRuntime
             apply(preparedRuntime)

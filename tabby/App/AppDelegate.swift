@@ -6,6 +6,9 @@ import Combine
 /// permissions, focus tracking, suggestion generation, overlay rendering, and acceptance.
 /// This file is the app's composition root.
 ///
+/// In React terms, this is the top-level container that owns the long-lived stores/services.
+/// SwiftUI renders views from these objects, but the view layer does not create or own them.
+///
 /// App lifecycle callbacks happen on the main thread; marking this type clarifies actor expectations.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -21,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     override init() {
+        // Build the dependency graph once up front so every scene/view observes the same
+        // long-lived objects for the entire app session.
         let permissionManager = PermissionManager()
         let runtimeManager = LlamaRuntimeManager()
         let runtimeModel = RuntimeBootstrapModel(runtimeManager: runtimeManager)
@@ -53,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             suggestionEngine: LlamaSuggestionEngine(runtimeManager: runtimeManager),
             screenshotContextGenerator: screenshotContextGenerator,
             contextBuffer: ContextBuffer(),
-            configuration: .debugDefaults
+            configuration: .standard
         )
 
         self.permissionManager = permissionManager
@@ -66,6 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.activationIndicatorController = activationIndicatorController
         super.init()
 
+        // These closures bridge events across subsystems without forcing those subsystems
+        // to know about each other directly.
         runtimeModel.onWillReloadModel = { [weak suggestionCoordinator] in
             suggestionCoordinator?.prepareForRuntimeModelSwitch()
         }
@@ -74,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             runtimeModel?.refreshAvailableModels()
         }
 
+        // Combine subscriptions keep the app's long-lived services in sync as permission and
+        // focus state changes over time.
         permissionManager.$inputMonitoringGranted
             .sink { [weak self] _ in
                 self?.inputMonitor.refresh()

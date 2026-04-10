@@ -4,6 +4,9 @@ import Foundation
 import ScreenCaptureKit
 @preconcurrency import Vision
 
+/// Developer-only smoke test for the screenshot + OCR path.
+/// This file is not part of the app's runtime architecture; it exists so maintainers can quickly
+/// verify screen-capture permissions and OCR output outside the main app flow.
 enum SmokeError: LocalizedError {
     case noFrontmostApp
     case noWindow(pid_t)

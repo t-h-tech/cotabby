@@ -6,9 +6,8 @@ import SwiftUI
 /// Owns the non-activating floating panel that renders ghost text near the caret. AppKit window
 /// behavior stays isolated here so the coordinator only has to reason about overlay state.
 ///
-/// Owns the transparent floating panel that renders ghost text near the caret.
-/// Keeping window management here prevents AppKit concerns from leaking into the
-/// suggestion state machine.
+/// This separation matters because overlay bugs are often windowing bugs, not state-machine bugs.
+/// By keeping the panel lifecycle here, `SuggestionCoordinator` can stay focused on suggestion logic.
 @MainActor
 final class OverlayController {
     var onStateChange: ((OverlayState) -> Void)?
@@ -26,6 +25,8 @@ final class OverlayController {
             backing: .buffered,
             defer: true
         )
+        // A non-activating panel lets Tabby draw UI near the caret without stealing focus
+        // from the app the user is actively typing into.
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
@@ -74,6 +75,9 @@ private final class OverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// Small SwiftUI view hosted inside the floating AppKit panel.
+/// Keeping the rendered content separate from the window controller makes styling easier to evolve
+/// without touching the AppKit positioning code.
 private struct GhostSuggestionView: View {
     let text: String
 
@@ -91,6 +95,7 @@ private struct GhostSuggestionView: View {
     }
 }
 
+/// Visual hint that teaches the user how to accept the suggestion.
 private struct GhostKeycap: View {
     let label: String
 

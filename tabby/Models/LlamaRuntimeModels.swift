@@ -26,7 +26,7 @@ enum RuntimeBootstrapState: Equatable, Sendable {
 }
 
 /// One bundled GGUF model option that can be displayed in the menu and loaded at runtime.
-/// Filenames remain user-visible in v1 so selection maps directly to the actual disk asset.
+/// Filenames remain user-visible for now so the picker maps directly to the actual disk asset.
 struct RuntimeModelOption: Equatable, Hashable, Sendable, Identifiable {
     let filename: String
     let url: URL

@@ -3,15 +3,19 @@ import CoreGraphics
 import Foundation
 
 /// File overview:
-/// Coordinates the entire inline-completion pipeline. It listens to focus and input changes,
-/// schedules debounced generation, validates freshness, drives the ghost overlay, and accepts
-/// suggestions with `Tab`.
+/// Coordinates Tabby's end-to-end inline-completion pipeline. It listens to focus and input
+/// changes, schedules debounced generation, rejects stale results, drives the ghost overlay,
+/// and accepts suggestions with `Tab`.
 ///
-/// Owns debounce, generation, stale-result rejection, and the ghost-text overlay lifecycle.
-/// The important architectural choice is that overlay visibility is derived from the same
-/// canonical ready suggestion state that powers `Tab` acceptance.
+/// This file is currently the app's largest state machine. The comments and section markers below
+/// are here to help maintainers navigate its responsibilities until more logic is extracted into
+/// smaller types.
 @MainActor
 final class SuggestionCoordinator: ObservableObject {
+    /// `@Published private(set)` means SwiftUI can observe these values, but only the coordinator
+    /// itself is allowed to mutate them.
+    ///
+    /// The first group is user-facing and debug-facing state surfaced in the menu UI.
     @Published private(set) var state: SuggestionDebugState = .idle
     @Published private(set) var overlayState: OverlayState = .hidden(reason: "Overlay idle.")
     @Published private(set) var latestSuggestionPreview: String?
@@ -33,6 +37,8 @@ final class SuggestionCoordinator: ObservableObject {
     @Published private(set) var selectedWordCountPreset: SuggestionWordCountPreset = .threeToSeven
     @Published private(set) var selectedPromptMode: SuggestionPromptMode = .guided
 
+    // Core collaborators. The coordinator orchestrates these services but does not own their
+    // lower-level implementation details.
     private let permissionManager: PermissionManager
     private let focusModel: FocusTrackingModel
     private let inputMonitor: InputMonitor
@@ -48,6 +54,7 @@ final class SuggestionCoordinator: ObservableObject {
     private static let selectedPromptModeDefaultsKey = "selectedSuggestionPromptMode"
     private static let totalTabAcceptedWordCountDefaultsKey = "totalTabAcceptedWordCount"
 
+    // Task/cancellation state for the asynchronous pipeline.
     private var cancellables = Set<AnyCancellable>()
     private var debounceTask: Task<Void, Never>?
     private var generationTask: Task<Void, Never>?
@@ -85,6 +92,8 @@ final class SuggestionCoordinator: ObservableObject {
         configuration: SuggestionConfiguration,
         userDefaults: UserDefaults = .standard
     ) {
+        // Restore persisted user preferences before wiring the coordinator to the rest of the app.
+        // This ensures first-render UI matches the settings the user last chose.
         let storedWordCountPreset = userDefaults
             .string(forKey: Self.selectedWordCountPresetDefaultsKey)
             .flatMap(SuggestionWordCountPreset.init(rawValue:))
@@ -138,6 +147,8 @@ final class SuggestionCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // The monitor and overlay controller are callback-driven. The coordinator translates those
+        // callbacks back into its state-machine methods.
         inputMonitor.onEvent = { [weak self] event in
             self?.handleInputEvent(event) ?? false
         }
@@ -150,6 +161,8 @@ final class SuggestionCoordinator: ObservableObject {
             self?.overlayState = state
         }
     }
+
+    // MARK: - Lifecycle
 
     /// Reconciles coordinator state with the current permission and focus environment.
     func start() {
@@ -177,6 +190,8 @@ final class SuggestionCoordinator: ObservableObject {
         state = .idle
         latestStageMessage = "Idle: runtime model switching reset active suggestion state."
     }
+
+    // MARK: - User Preferences
 
     /// Updates the length target used in prompt instructions and persists the user preference.
     func selectWordCountPreset(_ preset: SuggestionWordCountPreset) {
@@ -231,6 +246,8 @@ final class SuggestionCoordinator: ObservableObject {
             schedulePrediction()
         }
     }
+
+    // MARK: - Environment and Input Handling
 
     private func handlePermissionChange() {
         if !permissionManager.screenRecordingGranted {
@@ -335,7 +352,7 @@ final class SuggestionCoordinator: ObservableObject {
     }
 
     /// While a suggestion tail is active, normal typing is interpreted relative to that tail first.
-    /// This is the same idea as reconciling optimistic UI with the eventual server state:
+    /// This is the same idea as reconciling optimistic UI with the eventual live editor state:
     /// keep the existing session only when the user's new input is still consistent with it.
     private func handleInputEvent(_ event: CapturedInputEvent, with session: ActiveSuggestionSession) -> Bool {
         switch event.kind {
@@ -375,6 +392,8 @@ final class SuggestionCoordinator: ObservableObject {
             return false
         }
     }
+
+    // MARK: - Prediction Pipeline
 
     private func schedulePrediction() {
         guard case .supported = focusModel.snapshot.capability else {
@@ -600,6 +619,8 @@ final class SuggestionCoordinator: ObservableObject {
         logStage("failed", workID: workID, generation: latestGenerationNumber, message: message)
     }
 
+    // MARK: - Coordinator State Reset
+
     /// Recomputes whether prediction should be enabled based on current permissions and focus support.
     private func reconcileWithCurrentEnvironment() {
         guard permissionManager.inputMonitoringGranted else {
@@ -709,6 +730,8 @@ final class SuggestionCoordinator: ObservableObject {
         generationTask = nil
         latestWorkID &+= 1
     }
+
+    // MARK: - Visual Context
 
     /// Starts one screenshot-derived augmentation session per focused field.
     /// We intentionally scope this to field identity rather than text generation number because
@@ -866,6 +889,8 @@ final class SuggestionCoordinator: ObservableObject {
         }
     }
 
+    // MARK: - Prompt Construction
+
     /// Builds the prompt contract that the local model sees for the current focused field.
     private func buildPrompt(
         from context: FocusedInputContext,
@@ -874,7 +899,8 @@ final class SuggestionCoordinator: ObservableObject {
         let prefix = truncatedPromptPrefix(from: context.precedingText)
 
         if selectedPromptMode == .prefixOnly {
-            // Temporary experiment: always prepend one hardcoded user profile block for prefix-only mode.
+            // Prefix-only mode intentionally sends just the user's trailing text context.
+            // It is the lowest-latency path and avoids instruction-tuned prompt overhead.
             return prefix
         }
 
@@ -992,6 +1018,8 @@ final class SuggestionCoordinator: ObservableObject {
     private var activeMaxPredictionTokens: Int {
         max(configuration.maxPredictionTokens, selectedWordCountPreset.suggestedPredictionTokenBudget)
     }
+
+    // MARK: - Acceptance and Session Reconciliation
 
     /// Accepts the current suggestion only if the field, generation, and visible overlay still match.
     private func acceptCurrentSuggestion() -> Bool {
@@ -1328,6 +1356,8 @@ final class SuggestionCoordinator: ObservableObject {
         return visibleText == text
     }
 
+    // MARK: - Overlay and Logging
+
     /// Shows or repositions ghost text while keeping overlay state derived from ready suggestions.
     private func presentOverlay(text: String, at caretRect: CGRect) {
         guard !text.isEmpty else {
@@ -1451,8 +1481,8 @@ final class SuggestionCoordinator: ObservableObject {
         print(line)
     }
 
-    /// Compact one-line logs are good for scanning, but debugging prompts needs the exact payload.
-    /// We print full blocks here so you can compare Tabby's request with a manual curl byte-for-byte.
+    /// Compact one-line logs are good for scanning, but prompt debugging requires the exact payload.
+    /// We print the full block here so maintainers can inspect the precise prompt or output text.
     private func logTextBlock(
         kind: String,
         stage: String,
@@ -1462,6 +1492,8 @@ final class SuggestionCoordinator: ObservableObject {
     ) {
         let generationSummary = generation.map(String.init) ?? "n/a"
         let renderedText = text.isEmpty ? "<empty>" : text
+        // Multi-line log blocks are easier to inspect than escaped one-line strings when debugging
+        // prompt construction or output normalization.
         print(
             """
             [Suggestion \(kind)] stage=\(stage) work=\(workID) generation=\(generationSummary)
