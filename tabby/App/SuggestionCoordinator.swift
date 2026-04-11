@@ -45,7 +45,8 @@ final class SuggestionCoordinator: ObservableObject {
     private let suggestionInserter: SuggestionInserter
     private let suggestionEngine: LlamaSuggestionEngine
     private let visualContextCoordinator: VisualContextCoordinator
-    private let contextBuffer: ContextBuffer
+    private let interactionState: SuggestionInteractionState
+    private let workController: SuggestionWorkController
     private let configuration: SuggestionConfiguration
     private let userDefaults: UserDefaults
     private let overlayPresenter: SuggestionOverlayPresenter
@@ -55,16 +56,9 @@ final class SuggestionCoordinator: ObservableObject {
     private static let selectedPromptModeDefaultsKey = "selectedSuggestionPromptMode"
     private static let totalTabAcceptedWordCountDefaultsKey = "totalTabAcceptedWordCount"
 
-    // Task/cancellation state for the asynchronous pipeline.
+    // Combine subscriptions are the coordinator's remaining direct mutable bookkeeping.
+    // Async work and active-session storage now live in dedicated collaborators below.
     private var cancellables = Set<AnyCancellable>()
-    private var debounceTask: Task<Void, Never>?
-    private var generationTask: Task<Void, Never>?
-    private var latestWorkID: UInt64 = 0
-    private var activeSession: ActiveSuggestionSession?
-    /// After Tab inserts a chunk, AX may not reflect the new text for one or more poll cycles.
-    /// This sentinel records the consumed count we just committed so reconcile() does not
-    /// misinterpret the stale AX state as an undo and drop the session.
-    private var pendingInsertionConsumedCount: Int?
 
     init(
         permissionManager: PermissionManager,
@@ -74,7 +68,8 @@ final class SuggestionCoordinator: ObservableObject {
         suggestionInserter: SuggestionInserter,
         suggestionEngine: LlamaSuggestionEngine,
         visualContextCoordinator: VisualContextCoordinator,
-        contextBuffer: ContextBuffer,
+        interactionState: SuggestionInteractionState,
+        workController: SuggestionWorkController,
         configuration: SuggestionConfiguration,
         userDefaults: UserDefaults = .standard
     ) {
@@ -97,9 +92,12 @@ final class SuggestionCoordinator: ObservableObject {
         self.suggestionInserter = suggestionInserter
         self.suggestionEngine = suggestionEngine
         self.visualContextCoordinator = visualContextCoordinator
-        self.contextBuffer = contextBuffer
+        self.interactionState = interactionState
+        self.workController = workController
         self.configuration = configuration
         self.userDefaults = userDefaults
+        // These collaborators isolate "how overlay/logging works" from "when the coordinator
+        // wants to show state," which keeps the coordinator closer to orchestration code.
         overlayPresenter = SuggestionOverlayPresenter(overlayController: overlayController)
         logger = SuggestionDebugLogger()
         selectedWordCountPreset = resolvedWordCountPreset
@@ -161,6 +159,10 @@ final class SuggestionCoordinator: ObservableObject {
         }
     }
 
+    private var currentWorkID: UInt64 {
+        workController.currentWorkID
+    }
+
     // MARK: - Lifecycle
 
     /// Reconciles coordinator state with the current permission and focus environment.
@@ -184,7 +186,7 @@ final class SuggestionCoordinator: ObservableObject {
     /// This prevents stale completions from the previous model from surviving the switch.
     func prepareForRuntimeModelSwitch() {
         cancelPredictionWork()
-        contextBuffer.clear()
+        interactionState.resetAll()
         visualContextCoordinator.cancel(resetState: true)
         clearSuggestion(clearDiagnostics: true)
         hideOverlay(reason: "Overlay hidden because the runtime model is switching.")
@@ -257,25 +259,22 @@ final class SuggestionCoordinator: ObservableObject {
 
         reconcileWithCurrentEnvironment()
 
-        if permissionManager.inputMonitoringGranted,
-           case .supported = focusModel.snapshot.capability
-        {
+        if SuggestionAvailabilityEvaluator.shouldSchedulePrediction(
+            inputMonitoringGranted: permissionManager.inputMonitoringGranted,
+            focusSnapshot: focusModel.snapshot
+        ) {
             handleSupportedSnapshot(focusModel.snapshot)
         }
     }
 
     private func handleFocusSnapshotChange(_ snapshot: FocusSnapshot) {
-        guard permissionManager.inputMonitoringGranted else {
-            disablePredictions(reason: "Input Monitoring permission is required before Tabby can react to typing.")
-            return
-        }
-
-        switch snapshot.capability {
-        case .supported:
+        if let disabledReason = SuggestionAvailabilityEvaluator.disabledReason(
+            inputMonitoringGranted: permissionManager.inputMonitoringGranted,
+            focusSnapshot: snapshot
+        ) {
+            disablePredictions(reason: disabledReason)
+        } else {
             handleSupportedSnapshot(snapshot)
-
-        case let .blocked(reason), let .unsupported(reason):
-            disablePredictions(reason: reason)
         }
     }
 
@@ -295,13 +294,12 @@ final class SuggestionCoordinator: ObservableObject {
             state = .idle
         }
 
-        if activeSession != nil {
+        if interactionState.activeSession != nil {
             reconcileActiveSession(with: snapshot)
             return
         }
 
-        if let currentContext = contextBuffer.currentContext,
-           currentContext.elementIdentifier != focusedContext.elementIdentifier {
+        if interactionState.hasFocusedElementChanged(comparedTo: focusedContext) {
             cancelPredictionWork()
             clearSuggestion(clearDiagnostics: true)
             hideOverlay(reason: "Overlay hidden because the focused field changed.")
@@ -314,8 +312,11 @@ final class SuggestionCoordinator: ObservableObject {
     }
 
     private func handleInputEvent(_ event: CapturedInputEvent) -> Bool {
-        guard permissionManager.inputMonitoringGranted else {
-            disablePredictions(reason: "Input Monitoring permission is required before Tabby can react to typing.")
+        if let disabledReason = SuggestionAvailabilityEvaluator.disabledReason(
+            inputMonitoringGranted: permissionManager.inputMonitoringGranted,
+            focusSnapshot: focusModel.snapshot
+        ) {
+            disablePredictions(reason: disabledReason)
             return false
         }
 
@@ -323,7 +324,7 @@ final class SuggestionCoordinator: ObservableObject {
             return acceptCurrentSuggestion()
         }
 
-        if let activeSession {
+        if let activeSession = interactionState.activeSession {
             return handleInputEvent(event, with: activeSession)
         }
 
@@ -346,7 +347,7 @@ final class SuggestionCoordinator: ObservableObject {
     private func handleSuppressedSyntheticInput() {
         logStage(
             "suppressed-synthetic-input",
-            workID: latestWorkID,
+            workID: currentWorkID,
             generation: latestGenerationNumber,
             message: "Ignored Tabby's own synthetic key event."
         )
@@ -397,40 +398,29 @@ final class SuggestionCoordinator: ObservableObject {
     // MARK: - Prediction Pipeline
 
     private func schedulePrediction() {
-        guard case .supported = focusModel.snapshot.capability else {
-            disablePredictions(reason: focusModel.snapshot.capability.summary)
+        if let disabledReason = SuggestionAvailabilityEvaluator.disabledReason(
+            inputMonitoringGranted: permissionManager.inputMonitoringGranted,
+            focusSnapshot: focusModel.snapshot
+        ) {
+            disablePredictions(reason: disabledReason)
             return
         }
 
         // Task cancellation in Swift is cooperative, so we also use an explicit work id.
         // That gives us strict "latest request wins" semantics even if an old task wakes up late.
-        cancelPredictionWork()
-        let workID = nextWorkID()
+        let workID = workController.replaceDebouncedWork(
+            delayMilliseconds: configuration.debounceMilliseconds
+        ) { [weak self] workID in
+            await self?.generateFromCurrentFocus(workID: workID)
+        }
 
         state = .debouncing
         logStage("debouncing", workID: workID, message: "Waiting \(configuration.debounceMilliseconds)ms before generating.")
-
-        debounceTask = Task { [weak self] in
-            guard let self else {
-                return
-            }
-
-            let delayNanoseconds = UInt64(configuration.debounceMilliseconds) * 1_000_000
-            try? await Task.sleep(nanoseconds: delayNanoseconds)
-            guard !Task.isCancelled else {
-                return
-            }
-            guard workID == self.latestWorkID else {
-                return
-            }
-
-            await self.generateFromCurrentFocus(workID: workID)
-        }
     }
 
     /// Refreshes focus after debounce, materializes a stable context, and starts generation.
     private func generateFromCurrentFocus(workID: UInt64) async {
-        guard workID == latestWorkID else {
+        guard workController.isCurrent(workID) else {
             return
         }
 
@@ -439,12 +429,15 @@ final class SuggestionCoordinator: ObservableObject {
         focusModel.refreshNow()
         let snapshot = focusModel.snapshot
 
-        guard permissionManager.inputMonitoringGranted else {
-            disablePredictions(reason: "Input Monitoring permission is required before Tabby can react to typing.")
+        if let disabledReason = SuggestionAvailabilityEvaluator.disabledReason(
+            inputMonitoringGranted: permissionManager.inputMonitoringGranted,
+            focusSnapshot: snapshot
+        ) {
+            disablePredictions(reason: disabledReason)
             return
         }
 
-        guard case .supported = snapshot.capability, let rawContext = snapshot.context else {
+        guard let rawContext = snapshot.context else {
             disablePredictions(reason: snapshot.capability.summary)
             return
         }
@@ -456,7 +449,7 @@ final class SuggestionCoordinator: ObservableObject {
             return
         }
 
-        let context = contextBuffer.materialize(from: rawContext)
+        let context = interactionState.materializeContext(from: rawContext)
         let injectedContextSummary = selectedPromptMode.usesVisualContext
             ? visualContextCoordinator.summary(for: context)
             : nil
@@ -481,17 +474,14 @@ final class SuggestionCoordinator: ObservableObject {
             prompt: requestBuildResult.promptPreview
         )
 
-        generationTask = Task { [weak self] in
+        workController.replaceGenerationWork(for: workID) { [weak self] in
             guard let self else {
                 return
             }
 
             do {
                 let result = try await suggestionEngine.generateSuggestion(for: request)
-                guard !Task.isCancelled else {
-                    return
-                }
-                guard workID == self.latestWorkID else {
+                guard !Task.isCancelled, self.workController.isCurrent(workID) else {
                     return
                 }
 
@@ -499,7 +489,7 @@ final class SuggestionCoordinator: ObservableObject {
             } catch SuggestionClientError.cancelled {
                 return
             } catch {
-                guard workID == self.latestWorkID else {
+                guard self.workController.isCurrent(workID) else {
                     return
                 }
 
@@ -510,24 +500,27 @@ final class SuggestionCoordinator: ObservableObject {
 
     /// Promotes a generated result to `ready` only when it is still fresh for the current field.
     private func apply(result: SuggestionResult, workID: UInt64) async {
-        guard workID == latestWorkID else {
+        guard workController.isCurrent(workID) else {
             return
         }
 
         focusModel.refreshNow()
         let snapshot = focusModel.snapshot
 
-        guard permissionManager.inputMonitoringGranted else {
-            disablePredictions(reason: "Input Monitoring permission is required before Tabby can react to typing.")
+        if let disabledReason = SuggestionAvailabilityEvaluator.disabledReason(
+            inputMonitoringGranted: permissionManager.inputMonitoringGranted,
+            focusSnapshot: snapshot
+        ) {
+            disablePredictions(reason: disabledReason)
             return
         }
 
-        guard case .supported = snapshot.capability, let rawContext = snapshot.context else {
+        guard let rawContext = snapshot.context else {
             disablePredictions(reason: snapshot.capability.summary)
             return
         }
 
-        let liveContext = contextBuffer.materialize(from: rawContext)
+        let liveContext = interactionState.materializeContext(from: rawContext)
         // Generation numbers are our stale-result guard. If the text changed while the model was
         // thinking, we drop the answer instead of showing a suggestion for old content.
         guard liveContext.generation == result.generation else {
@@ -576,15 +569,13 @@ final class SuggestionCoordinator: ObservableObject {
             return
         }
 
-        let session = ActiveSuggestionSession(
-            baseContext: liveContext,
-            fullText: result.text,
-            latency: result.latency
-        )
-
         latestLatencyMilliseconds = Int(result.latency * 1000)
         latestGenerationNumber = liveContext.generation
-        activeSession = session
+        let session = interactionState.startSession(
+            fullText: result.text,
+            liveContext: liveContext,
+            latency: result.latency
+        )
         applySessionDiagnostics(session, acceptanceAction: "Generated new suggestion.")
         state = .ready(text: session.remainingText, latency: session.latency)
         presentOverlay(text: session.remainingText, at: liveContext.caretRect)
@@ -600,7 +591,7 @@ final class SuggestionCoordinator: ObservableObject {
 
     /// Converts a runtime or engine failure into visible coordinator state and clears stale UI.
     private func applyFailure(_ message: String, workID: UInt64) async {
-        guard workID == latestWorkID else {
+        guard workController.isCurrent(workID) else {
             return
         }
 
@@ -614,19 +605,17 @@ final class SuggestionCoordinator: ObservableObject {
 
     /// Recomputes whether prediction should be enabled based on current permissions and focus support.
     private func reconcileWithCurrentEnvironment() {
-        guard permissionManager.inputMonitoringGranted else {
-            disablePredictions(reason: "Input Monitoring permission is required before Tabby can react to typing.")
-            return
-        }
+        let disabledReason = SuggestionAvailabilityEvaluator.disabledReason(
+            inputMonitoringGranted: permissionManager.inputMonitoringGranted,
+            focusSnapshot: focusModel.snapshot
+        )
 
-        switch focusModel.snapshot.capability {
-        case .supported:
+        if disabledReason == nil {
             if case .disabled = state {
                 state = .idle
             }
-
-        case let .blocked(reason), let .unsupported(reason):
-            disablePredictions(reason: reason)
+        } else if let disabledReason {
+            disablePredictions(reason: disabledReason)
         }
     }
 
@@ -634,7 +623,7 @@ final class SuggestionCoordinator: ObservableObject {
     /// This is the heart of partial acceptance: a text change is not automatically "stale" anymore.
     /// It may instead mean "the user consumed the next expected part of the suggestion."
     private func reconcileActiveSession(with snapshot: FocusSnapshot) {
-        guard let session = activeSession else {
+        guard interactionState.activeSession != nil else {
             if overlayState.isVisible {
                 hideOverlay(reason: "Overlay hidden because no ready suggestion remains.")
             }
@@ -646,16 +635,13 @@ final class SuggestionCoordinator: ObservableObject {
             return
         }
 
-        let liveContext = contextBuffer.materialize(from: rawContext)
+        guard let reconciliation = interactionState.reconcileActiveSession(with: rawContext) else {
+            invalidateActiveSuggestion(reason: "Overlay hidden because no ready suggestion remains.")
+            return
+        }
 
-        switch SuggestionSessionReconciler.reconcile(
-            session: session,
-            with: liveContext,
-            pendingInsertionConsumedCount: pendingInsertionConsumedCount
-        ) {
-        case let .valid(reconciledSession, advancement, nextPendingInsertionConsumedCount):
-            pendingInsertionConsumedCount = nextPendingInsertionConsumedCount
-            activeSession = reconciledSession
+        switch reconciliation {
+        case let .valid(liveContext, reconciledSession, advancement):
             latestGenerationNumber = liveContext.generation
             applySessionDiagnostics(reconciledSession, acceptanceAction: advancement?.actionSummary ?? latestAcceptanceAction)
 
@@ -675,7 +661,7 @@ final class SuggestionCoordinator: ObservableObject {
             if let advancement {
                 logStage(
                     advancement.stage,
-                    workID: latestWorkID,
+                    workID: currentWorkID,
                     generation: liveContext.generation,
                     message: advancement.message,
                     normalizedOutput: reconciledSession.remainingText
@@ -691,7 +677,7 @@ final class SuggestionCoordinator: ObservableObject {
     private func disablePredictions(reason: String) {
         cancelPredictionWork()
         visualContextCoordinator.cancel(resetState: true)
-        contextBuffer.clear()
+        interactionState.resetAll()
         clearSuggestion(clearDiagnostics: true)
         hideOverlay(reason: reason)
         state = .disabled(reason)
@@ -707,8 +693,7 @@ final class SuggestionCoordinator: ObservableObject {
         latestRemainingCharacterCount = nil
         latestAcceptanceAction = nil
         latestLatencyMilliseconds = nil
-        activeSession = nil
-        pendingInsertionConsumedCount = nil
+        interactionState.clearSuggestion()
 
         if clearDiagnostics {
             latestPromptPreview = nil
@@ -719,11 +704,7 @@ final class SuggestionCoordinator: ObservableObject {
 
     /// Cancels debounce/generation tasks and advances the work id so late completions are ignored.
     private func cancelPredictionWork() {
-        debounceTask?.cancel()
-        generationTask?.cancel()
-        debounceTask = nil
-        generationTask = nil
-        latestWorkID &+= 1
+        workController.cancelAll()
     }
 
     // MARK: - Visual Context
@@ -734,20 +715,14 @@ final class SuggestionCoordinator: ObservableObject {
         focusModel.refreshNow()
         let snapshot = focusModel.snapshot
 
-        guard case .supported = snapshot.capability,
-              let context = snapshot.context,
-              context.elementIdentifier == elementIdentifier,
-              SuggestionRequestFactory.shouldGenerateSuggestion(for: context.precedingText)
-        else {
+        guard SuggestionAvailabilityEvaluator.shouldSchedulePredictionWhenVisualContextBecomesReady(
+            focusSnapshot: snapshot,
+            matching: elementIdentifier
+        ) else {
             return
         }
 
         schedulePrediction()
-    }
-
-    private func nextWorkID() -> UInt64 {
-        latestWorkID &+= 1
-        return latestWorkID
     }
 
     // MARK: - Acceptance and Session Reconciliation
@@ -764,55 +739,25 @@ final class SuggestionCoordinator: ObservableObject {
             return passTabThrough(reason: snapshot.capability.summary)
         }
 
-        guard case .ready = state, let currentSession = activeSession else {
+        guard case .ready = state else {
             return passTabThrough(reason: "Tab passed through because no valid suggestion was ready.")
         }
 
-        guard rawContext.selection.length == 0 else {
-            return passTabThrough(reason: "Tab passed through because text is currently selected.")
-        }
-
-        guard SuggestionSessionReconciler.overlayAllowsAcceptance(
-            of: currentSession.remainingText,
+        let acceptancePreparation = interactionState.prepareAcceptance(
+            from: rawContext,
             overlayState: overlayState
-        ) else {
-            return passTabThrough(reason: "Tab passed through because no visible ghost text matched the ready suggestion.")
-        }
-
+        )
+        let liveContext: FocusedInputContext
         let sessionForAcceptance: ActiveSuggestionSession
-        let liveContext = contextBuffer.materialize(from: rawContext)
-        if overlayState.isVisible {
-            // A visible overlay means AX has already caught up to the current caret/text state,
-            // so we can insist that live editor state and session state agree before accepting.
-            switch SuggestionSessionReconciler.reconcile(
-                session: currentSession,
-                with: liveContext,
-                pendingInsertionConsumedCount: pendingInsertionConsumedCount
-            ) {
-            case .invalid(let reason):
-                return passTabThrough(reason: reason)
+        let acceptedChunk: String
+        switch acceptancePreparation {
+        case let .ready(preparedLiveContext, preparedSession, preparedAcceptedChunk):
+            liveContext = preparedLiveContext
+            sessionForAcceptance = preparedSession
+            acceptedChunk = preparedAcceptedChunk
 
-            case let .valid(reconciledSession, _, nextPendingInsertionConsumedCount):
-                pendingInsertionConsumedCount = nextPendingInsertionConsumedCount
-                sessionForAcceptance = reconciledSession
-            }
-        } else {
-            // We intentionally allow acceptance while the overlay is temporarily hidden.
-            // That hidden state usually means "waiting for host app caret sync" after a prior
-            // partial acceptance, not "there is no active suggestion anymore."
-            guard liveContext.elementIdentifier == currentSession.baseContext.elementIdentifier else {
-                return passTabThrough(reason: "Tab passed through because the focused field changed.")
-            }
-            sessionForAcceptance = currentSession
-        }
-
-        guard !sessionForAcceptance.isExhausted else {
-            return passTabThrough(reason: "Tab passed through because no remaining suggestion text was available.")
-        }
-
-        let acceptedChunk = SuggestionSessionReconciler.nextAcceptanceChunk(from: sessionForAcceptance.remainingText)
-        guard !acceptedChunk.isEmpty else {
-            return passTabThrough(reason: "Tab passed through because no remaining suggestion chunk was available.")
+        case let .invalid(reason):
+            return passTabThrough(reason: reason)
         }
 
         guard suggestionInserter.insert(acceptedChunk) else {
@@ -823,7 +768,7 @@ final class SuggestionCoordinator: ObservableObject {
             state = .idle
             logStage(
                 "insert-failed",
-                workID: latestWorkID,
+                workID: currentWorkID,
                 generation: liveContext.generation,
                 message: message,
                 normalizedOutput: acceptedChunk
@@ -835,45 +780,46 @@ final class SuggestionCoordinator: ObservableObject {
 
         cancelPredictionWork()
 
-        let advancedSession = sessionForAcceptance.advancing(by: acceptedChunk.count)
-        latestGenerationNumber = liveContext.generation
-        // Arm the sentinel so reconcile() tolerates stale AX state for the next poll cycle.
-        pendingInsertionConsumedCount = advancedSession.consumedCharacterCount
-
-        if advancedSession.isExhausted {
-            pendingInsertionConsumedCount = nil
+        switch interactionState.commitAcceptedChunk(
+            acceptedChunk,
+            liveContext: liveContext,
+            session: sessionForAcceptance
+        ) {
+        case .exhausted:
+            latestGenerationNumber = liveContext.generation
             clearSuggestion(clearDiagnostics: false)
             hideOverlay(reason: "Overlay hidden because Tab accepted the final suggestion chunk.")
             latestAcceptanceAction = "Accepted final chunk with Tab."
             state = .idle
             logStage(
                 "tab-accepted-final-chunk",
-                workID: latestWorkID,
+                workID: currentWorkID,
                 generation: liveContext.generation,
                 message: "Inserted the final suggestion chunk and queued a refresh.",
                 normalizedOutput: acceptedChunk
             )
             schedulePrediction()
             return true
-        }
 
-        activeSession = advancedSession
-        applySessionDiagnostics(advancedSession, acceptanceAction: "Accepted next chunk with Tab.")
-        state = .ready(text: advancedSession.remainingText, latency: advancedSession.latency)
-        // Optimistic overlay: show the remaining suggestion text immediately at the last known
-        // caret position instead of hiding and waiting for AX to report the new caret. The overlay
-        // position will be slightly stale (by roughly the inserted chunk width) for one poll cycle,
-        // then snap to the correct position when AX catches up. This eliminates the flash where
-        // ghost text disappears and reappears between Tab presses.
-        presentOverlay(text: advancedSession.remainingText, at: liveContext.caretRect)
-        logStage(
-            "tab-accepted-chunk",
-            workID: latestWorkID,
-            generation: liveContext.generation,
-            message: "Inserted the next suggestion chunk and kept the remaining tail active.",
-            normalizedOutput: acceptedChunk
-        )
-        return true
+        case let .advanced(advancedSession, _):
+            latestGenerationNumber = liveContext.generation
+            applySessionDiagnostics(advancedSession, acceptanceAction: "Accepted next chunk with Tab.")
+            state = .ready(text: advancedSession.remainingText, latency: advancedSession.latency)
+            // Optimistic overlay: show the remaining suggestion text immediately at the last known
+            // caret position instead of hiding and waiting for AX to report the new caret. The overlay
+            // position will be slightly stale (by roughly the inserted chunk width) for one poll cycle,
+            // then snap to the correct position when AX catches up. This eliminates the flash where
+            // ghost text disappears and reappears between Tab presses.
+            presentOverlay(text: advancedSession.remainingText, at: liveContext.caretRect)
+            logStage(
+                "tab-accepted-chunk",
+                workID: currentWorkID,
+                generation: liveContext.generation,
+                message: "Inserted the next suggestion chunk and kept the remaining tail active.",
+                normalizedOutput: acceptedChunk
+            )
+            return true
+        }
     }
 
     /// Returns control of `Tab` to the host app and clears stale suggestion UI.
@@ -885,7 +831,7 @@ final class SuggestionCoordinator: ObservableObject {
         state = .idle
         logStage(
             "tab-passed-through",
-            workID: latestWorkID,
+            workID: currentWorkID,
             generation: generation,
             message: reason
         )
@@ -896,15 +842,14 @@ final class SuggestionCoordinator: ObservableObject {
     /// next expected tail exactly. This avoids a wasteful regeneration for text the user already
     /// committed to the field themselves.
     private func advanceActiveSessionIfTypedCharactersMatch(_ typedCharacters: String, session: ActiveSuggestionSession) -> Bool {
-        guard let advancedSession = SuggestionSessionReconciler.advanceIfTypedCharactersMatch(
+        guard let advancedSession = interactionState.advanceIfTypedCharactersMatch(
             typedCharacters,
-            session: session
+            expectedSession: session
         ) else {
             return false
         }
 
         cancelPredictionWork()
-        activeSession = advancedSession
         applySessionDiagnostics(advancedSession, acceptanceAction: "User typed the next expected characters.")
 
         if advancedSession.isExhausted {
@@ -922,7 +867,7 @@ final class SuggestionCoordinator: ObservableObject {
         presentOverlay(text: advancedSession.remainingText, at: session.baseContext.caretRect)
         logStage(
             "typed-match-advanced",
-            workID: latestWorkID,
+            workID: currentWorkID,
             generation: latestGenerationNumber,
             message: "User typing matched the active suggestion tail exactly.",
             normalizedOutput: advancedSession.remainingText
@@ -952,7 +897,7 @@ final class SuggestionCoordinator: ObservableObject {
         latestAcceptanceAction = acceptanceAction
         hideOverlay(reason: reason)
         state = .idle
-        logStage(stage, workID: latestWorkID, generation: generation, message: message)
+        logStage(stage, workID: currentWorkID, generation: generation, message: message)
 
         if scheduleNextPrediction {
             schedulePrediction()

@@ -2,9 +2,9 @@ import AppKit
 import Combine
 
 /// File overview:
-/// Builds Tabby's dependency graph and starts the long-lived services that power
-/// permissions, focus tracking, suggestion generation, overlay rendering, and acceptance.
-/// This file is the app's composition root.
+/// Starts the long-lived services that power permissions, focus tracking, suggestion generation,
+/// overlay rendering, and acceptance. Dependency construction now lives in `TabbyAppEnvironment`,
+/// while `AppDelegate` focuses on lifecycle wiring and cross-subsystem subscriptions.
 ///
 /// In React terms, this is the top-level container that owns the long-lived stores/services.
 /// SwiftUI renders views from these objects, but the view layer does not create or own them.
@@ -12,6 +12,8 @@ import Combine
 /// App lifecycle callbacks happen on the main thread; marking this type clarifies actor expectations.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let environment: TabbyAppEnvironment
+
     let permissionManager: PermissionManager
     let runtimeModel: RuntimeBootstrapModel
     let modelDownloadManager: ModelDownloadManager
@@ -25,54 +27,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         // Build the dependency graph once up front so every scene/view observes the same
-        // long-lived objects for the entire app session.
-        let permissionManager = PermissionManager()
-        let runtimeManager = LlamaRuntimeManager()
-        let runtimeModel = RuntimeBootstrapModel(runtimeManager: runtimeManager)
-        let modelDownloadManager = ModelDownloadManager()
-        let suppressionController = InputSuppressionController()
-        let inputMonitor = InputMonitor(
-            permissionProvider: { permissionManager.inputMonitoringGranted },
-            suppressionController: suppressionController
-        )
-        let focusModel = FocusTrackingModel(
-            pollInterval: 0.25,
-            permissionProvider: { permissionManager.accessibilityGranted },
-            ignoredBundleIdentifier: Bundle.main.bundleIdentifier
-        )
-        let welcomeCoordinator = WelcomeCoordinator(
-            permissionManager: permissionManager,
-            runtimeModel: runtimeModel,
-            modelDownloadManager: modelDownloadManager
-        )
-        let suggestionInserter = SuggestionInserter(suppressionController: suppressionController)
-        let overlayController = OverlayController()
-        let activationIndicatorController = ActivationIndicatorController()
-        let screenshotContextGenerator = ScreenshotContextGenerator(runtimeManager: runtimeManager)
-        let visualContextCoordinator = VisualContextCoordinator(
-            screenshotContextGenerator: screenshotContextGenerator,
-            screenRecordingPermissionProvider: { permissionManager.screenRecordingGranted }
-        )
-        let suggestionCoordinator = SuggestionCoordinator(
-            permissionManager: permissionManager,
-            focusModel: focusModel,
-            inputMonitor: inputMonitor,
-            overlayController: overlayController,
-            suggestionInserter: suggestionInserter,
-            suggestionEngine: LlamaSuggestionEngine(runtimeManager: runtimeManager),
-            visualContextCoordinator: visualContextCoordinator,
-            contextBuffer: ContextBuffer(),
-            configuration: .standard
-        )
-
-        self.permissionManager = permissionManager
-        self.runtimeModel = runtimeModel
-        self.modelDownloadManager = modelDownloadManager
-        self.focusModel = focusModel
-        self.inputMonitor = inputMonitor
-        self.suggestionCoordinator = suggestionCoordinator
-        self.welcomeCoordinator = welcomeCoordinator
-        self.activationIndicatorController = activationIndicatorController
+        // long-lived objects for the entire app session. The `environment` property keeps
+        // those shared owners alive for the lifetime of the app delegate.
+        let environment = TabbyAppEnvironment()
+        self.environment = environment
+        permissionManager = environment.permissionManager
+        runtimeModel = environment.runtimeModel
+        modelDownloadManager = environment.modelDownloadManager
+        focusModel = environment.focusModel
+        inputMonitor = environment.inputMonitor
+        suggestionCoordinator = environment.suggestionCoordinator
+        welcomeCoordinator = environment.welcomeCoordinator
+        activationIndicatorController = environment.activationIndicatorController
         super.init()
 
         // These closures bridge events across subsystems without forcing those subsystems
