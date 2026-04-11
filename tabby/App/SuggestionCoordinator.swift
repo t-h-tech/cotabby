@@ -48,6 +48,8 @@ final class SuggestionCoordinator: ObservableObject {
     private let contextBuffer: ContextBuffer
     private let configuration: SuggestionConfiguration
     private let userDefaults: UserDefaults
+    private let overlayPresenter: SuggestionOverlayPresenter
+    private let logger: SuggestionDebugLogger
 
     private static let selectedWordCountPresetDefaultsKey = "selectedSuggestionWordCountPreset"
     private static let selectedPromptModeDefaultsKey = "selectedSuggestionPromptMode"
@@ -58,24 +60,11 @@ final class SuggestionCoordinator: ObservableObject {
     private var debounceTask: Task<Void, Never>?
     private var generationTask: Task<Void, Never>?
     private var latestWorkID: UInt64 = 0
-    private var lastLoggedMessage: String?
     private var activeSession: ActiveSuggestionSession?
     /// After Tab inserts a chunk, AX may not reflect the new text for one or more poll cycles.
     /// This sentinel records the consumed count we just committed so reconcile() does not
     /// misinterpret the stale AX state as an undo and drop the session.
     private var pendingInsertionConsumedCount: Int?
-    private let consoleStages: Set<String> = [
-        "generating",
-        "ready",
-        "empty-result",
-        "failed",
-        "tab-accepted-chunk",
-        "tab-accepted-final-chunk",
-        "typed-match-advanced",
-        "typed-match-exhausted",
-        "session-reconciled",
-        "session-exhausted"
-    ]
 
     init(
         permissionManager: PermissionManager,
@@ -111,6 +100,8 @@ final class SuggestionCoordinator: ObservableObject {
         self.contextBuffer = contextBuffer
         self.configuration = configuration
         self.userDefaults = userDefaults
+        overlayPresenter = SuggestionOverlayPresenter(overlayController: overlayController)
+        logger = SuggestionDebugLogger()
         selectedWordCountPreset = resolvedWordCountPreset
         selectedPromptMode = resolvedPromptMode
         totalTabAcceptedWordCount = max(storedTotalTabAcceptedWordCount, 0)
@@ -540,7 +531,7 @@ final class SuggestionCoordinator: ObservableObject {
         // Generation numbers are our stale-result guard. If the text changed while the model was
         // thinking, we drop the answer instead of showing a suggestion for old content.
         guard liveContext.generation == result.generation else {
-            latestRawModelOutput = makeDebugPreview(result.rawText)
+            latestRawModelOutput = SuggestionDebugLogger.debugPreview(result.rawText)
             logStage(
                 "stale-drop",
                 workID: workID,
@@ -553,7 +544,7 @@ final class SuggestionCoordinator: ObservableObject {
             return
         }
 
-        latestRawModelOutput = makeDebugPreview(result.rawText)
+        latestRawModelOutput = SuggestionDebugLogger.debugPreview(result.rawText)
 
         guard !result.text.isEmpty else {
             clearSuggestion()
@@ -992,35 +983,16 @@ final class SuggestionCoordinator: ObservableObject {
 
     // MARK: - Overlay and Logging
 
-    /// Shows or repositions ghost text while keeping overlay state derived from ready suggestions.
     private func presentOverlay(text: String, at caretRect: CGRect) {
-        guard !text.isEmpty else {
-            hideOverlay(reason: "Overlay hidden because the suggestion text was empty.")
-            return
-        }
-
-        let previousState = overlayState
-        guard previousState != .visible(text: text, caretRect: caretRect) else {
-            return
-        }
-
-        overlayController.showSuggestion(text, at: caretRect)
-
-        switch previousState {
-        case let .visible(previousText, previousCaretRect) where previousText == text && previousCaretRect != caretRect:
-            latestOverlayMessage = "Moved ghost text to the latest caret position."
-
-        default:
-            latestOverlayMessage = "Displayed ghost text near the caret."
+        if let message = overlayPresenter.present(text: text, at: caretRect, previousState: overlayState) {
+            latestOverlayMessage = message
         }
     }
 
     private func hideOverlay(reason: String) {
-        overlayController.hide(reason: reason)
-        latestOverlayMessage = reason
+        latestOverlayMessage = overlayPresenter.hide(reason: reason)
     }
 
-    /// Emits compact console summaries plus full prompt/output blocks for high-signal stages.
     private func logStage(
         _ stage: String,
         workID: UInt64,
@@ -1031,101 +1003,14 @@ final class SuggestionCoordinator: ObservableObject {
         normalizedOutput: String? = nil
     ) {
         latestStageMessage = message
-        guard consoleStages.contains(stage) else {
-            return
-        }
-
-        var parts = [
-            "[Suggestion]",
-            "stage=\(stage)",
-            "work=\(workID)"
-        ]
-
-        if let generation {
-            parts.append("generation=\(generation)")
-        }
-
-        parts.append("message=\(message)")
-
-        if stage == "generating", let prompt {
-            parts.append("prompt=\(makeDebugPreview(prompt))")
-        }
-
-        if stage != "generating" {
-            let generationOutput = normalizedOutput ?? rawOutput
-            if let generationOutput {
-                parts.append("output=\(makeDebugPreview(generationOutput))")
-            }
-        }
-
-        let summaryLine = parts.joined(separator: " ")
-        logLine(summaryLine)
-
-        if stage == "generating", let prompt {
-            logTextBlock(
-                kind: "prompt",
-                stage: stage,
-                workID: workID,
-                generation: generation,
-                text: prompt
-            )
-        }
-
-        if stage != "generating", let generationOutput = normalizedOutput ?? rawOutput {
-            logTextBlock(
-                kind: "output",
-                stage: stage,
-                workID: workID,
-                generation: generation,
-                text: generationOutput
-            )
-        }
-    }
-
-    private func logLine(_ line: String) {
-        guard line != lastLoggedMessage else {
-            return
-        }
-
-        lastLoggedMessage = line
-        print(line)
-    }
-
-    /// Compact one-line logs are good for scanning, but prompt debugging requires the exact payload.
-    /// We print the full block here so maintainers can inspect the precise prompt or output text.
-    private func logTextBlock(
-        kind: String,
-        stage: String,
-        workID: UInt64,
-        generation: UInt64?,
-        text: String
-    ) {
-        let generationSummary = generation.map(String.init) ?? "n/a"
-        let renderedText = text.isEmpty ? "<empty>" : text
-        // Multi-line log blocks are easier to inspect than escaped one-line strings when debugging
-        // prompt construction or output normalization.
-        print(
-            """
-            [Suggestion \(kind)] stage=\(stage) work=\(workID) generation=\(generationSummary)
-            ----- BEGIN \(kind.uppercased()) -----
-            \(renderedText)
-            ----- END \(kind.uppercased()) -----
-            """
+        logger.logStage(
+            stage,
+            workID: workID,
+            generation: generation,
+            message: message,
+            prompt: prompt,
+            rawOutput: rawOutput,
+            normalizedOutput: normalizedOutput
         )
-    }
-
-    /// Produces an escaped single-line preview suitable for compact logs and menu summaries.
-    private func makeDebugPreview(_ text: String) -> String {
-        if text.isEmpty {
-            return "<empty>"
-        }
-
-        let escaped = text.debugDescription
-        if escaped.count <= 160 {
-            return escaped
-        }
-
-        let index = escaped.index(escaped.startIndex, offsetBy: 160)
-        return "\(escaped[..<index])..."
     }
 }

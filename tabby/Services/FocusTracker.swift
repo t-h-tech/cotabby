@@ -3,25 +3,11 @@ import ApplicationServices
 import Foundation
 
 /// File overview:
-/// Polls the Accessibility tree, gathers nearby candidate elements, and reduces them into one
-/// stable `FocusSnapshot`. This is the boundary where raw AX data becomes app-friendly focus state.
+/// Polls the Accessibility tree on a timer and publishes the latest `FocusSnapshot`.
 ///
-/// The tracker recomputes truth from the OS on each poll instead of maintaining a complex local
-/// cache. That trades some efficiency for a much simpler and more reliable mental model.
-private struct AXFocusCandidate {
-    let elementIdentifier: String
-    let role: String
-    let subrole: String?
-    let textValue: String?
-    let selection: NSRange?
-    let caretRect: CGRect?
-    let inputFrameRect: CGRect?
-    let isSecure: Bool
-    let resolverCandidate: FocusCapabilityCandidate
-}
-
-/// Polls the current AX focus and reduces it into a stable snapshot.
-/// Polling is intentionally simple here: every tick recomputes truth from the OS.
+/// This file is now intentionally small: it owns poll timing, permission/frontmost-app guards, and
+/// the final `snapshot` publication contract. AX candidate resolution lives in
+/// `FocusSnapshotResolver`, and caret/frame heuristics live in `AXTextGeometryResolver`.
 @MainActor
 final class FocusTracker {
     var onSnapshotChange: ((FocusSnapshot) -> Void)?
@@ -35,17 +21,22 @@ final class FocusTracker {
     private let pollInterval: TimeInterval
     private let permissionProvider: @MainActor () -> Bool
     private let ignoredBundleIdentifier: String?
+    private let snapshotResolver: FocusSnapshotResolver
 
     private var timer: Timer?
 
     init(
         pollInterval: TimeInterval,
         permissionProvider: @escaping @MainActor () -> Bool,
-        ignoredBundleIdentifier: String?
+        ignoredBundleIdentifier: String?,
+        snapshotResolver: FocusSnapshotResolver? = nil
     ) {
         self.pollInterval = pollInterval
         self.permissionProvider = permissionProvider
         self.ignoredBundleIdentifier = ignoredBundleIdentifier
+        // Default resolver construction must happen inside the actor-isolated initializer body.
+        // Swift evaluates default parameter expressions before entering the `@MainActor` context.
+        self.snapshotResolver = snapshotResolver ?? FocusSnapshotResolver()
     }
 
     /// Starts periodic AX polling and immediately captures an initial snapshot.
@@ -109,7 +100,7 @@ final class FocusTracker {
             )
         }
 
-        guard let element = AXHelper.focusedElement() else {
+        guard let focusedElement = AXHelper.focusedElement() else {
             return FocusSnapshot(
                 applicationName: application.localizedName ?? "Unknown",
                 bundleIdentifier: application.bundleIdentifier,
@@ -119,346 +110,9 @@ final class FocusTracker {
             )
         }
 
-        return snapshot(for: element, application: application)
-    }
-
-    /// Resolves the best editable candidate around the focused AX node and materializes a focus snapshot.
-    private func snapshot(for focusedElement: AXUIElement, application: NSRunningApplication) -> FocusSnapshot {
-        let applicationName = application.localizedName ?? "Unknown"
-        let bundleIdentifier = application.bundleIdentifier ?? "unknown.bundle"
-        let focusedRole = AXHelper.stringValue(for: kAXRoleAttribute as CFString, on: focusedElement) ?? "Unknown"
-        let focusedSubrole = AXHelper.stringValue(for: kAXSubroleAttribute as CFString, on: focusedElement)
-        let focusedElementIdentifier = AXHelper.elementIdentifier(for: focusedElement, bundleIdentifier: bundleIdentifier)
-
-        let candidates = candidateElements(around: focusedElement).map {
-            candidateSnapshot(for: $0, bundleIdentifier: bundleIdentifier)
-        }
-        let resolution = FocusCapabilityResolver.resolve(candidates: candidates.map(\.resolverCandidate))
-        let selectedCandidate = resolution.bestDiagnosticCandidate.flatMap { candidate in
-            candidates.first(where: { $0.elementIdentifier == candidate.elementIdentifier })
-        }
-        let inspection = FocusInspectionSnapshot(
-            focusedElementIdentifier: focusedElementIdentifier,
-            focusedRole: focusedRole,
-            focusedSubrole: focusedSubrole,
-            resolvedElementIdentifier: selectedCandidate?.elementIdentifier,
-            resolvedRole: selectedCandidate?.role,
-            resolvedSubrole: selectedCandidate?.subrole,
-            missingCapabilities: resolution.resolvedCandidate == nil ? resolution.missingCapabilities : []
+        return snapshotResolver.resolveSnapshot(
+            focusedElement: focusedElement,
+            application: application
         )
-
-        guard let resolvedCandidate = selectedCandidate,
-              resolution.resolvedCandidate != nil
-        else {
-            return FocusSnapshot(
-                applicationName: applicationName,
-                bundleIdentifier: bundleIdentifier,
-                capability: .unsupported(resolution.unsupportedReason),
-                context: nil,
-                inspection: inspection
-            )
-        }
-
-        guard let selection = resolvedCandidate.selection else {
-            return FocusSnapshot(
-                applicationName: applicationName,
-                bundleIdentifier: bundleIdentifier,
-                capability: .unsupported("Selection range is unavailable."),
-                context: nil,
-                inspection: inspection
-            )
-        }
-
-        guard selection.location >= 0, selection.length >= 0 else {
-            return FocusSnapshot(
-                applicationName: applicationName,
-                bundleIdentifier: bundleIdentifier,
-                capability: .unsupported("Selection range is invalid."),
-                context: nil,
-                inspection: inspection
-            )
-        }
-
-        let value = resolvedCandidate.textValue ?? ""
-        // `NSRange` coming from AX is expressed in UTF-16 code units, which is why the code below
-        // uses `NSString` instead of slicing a native Swift `String` directly.
-        guard selection.location <= value.utf16.count else {
-            return FocusSnapshot(
-                applicationName: applicationName,
-                bundleIdentifier: bundleIdentifier,
-                capability: .unsupported("Selection range exceeds the current field value."),
-                context: nil,
-                inspection: inspection
-            )
-        }
-
-        guard let caretRect = resolvedCandidate.caretRect else {
-            return FocusSnapshot(
-                applicationName: applicationName,
-                bundleIdentifier: bundleIdentifier,
-                capability: .unsupported("Caret bounds are unavailable."),
-                context: nil,
-                inspection: inspection
-            )
-        }
-
-        let nsValue = value as NSString
-        let safeSelectionLocation = min(selection.location, nsValue.length)
-        let trailingStart = min(selection.location + selection.length, nsValue.length)
-        let context = FocusedInputSnapshot(
-            applicationName: applicationName,
-            bundleIdentifier: bundleIdentifier,
-            processIdentifier: Int32(application.processIdentifier),
-            elementIdentifier: resolvedCandidate.elementIdentifier,
-            role: resolvedCandidate.role,
-            subrole: resolvedCandidate.subrole,
-            caretRect: caretRect,
-            inputFrameRect: resolvedCandidate.inputFrameRect,
-            precedingText: nsValue.substring(to: safeSelectionLocation),
-            trailingText: nsValue.substring(from: trailingStart),
-            selection: selection,
-            isSecure: resolvedCandidate.isSecure
-        )
-
-        if resolvedCandidate.isSecure {
-            return FocusSnapshot(
-                applicationName: applicationName,
-                bundleIdentifier: bundleIdentifier,
-                capability: .blocked("Secure text input is active."),
-                context: context,
-                inspection: inspection
-            )
-        }
-
-        if selection.length > 0 {
-            return FocusSnapshot(
-                applicationName: applicationName,
-                bundleIdentifier: bundleIdentifier,
-                capability: .blocked("Text is currently selected."),
-                context: context,
-                inspection: inspection
-            )
-        }
-
-        return FocusSnapshot(
-            applicationName: applicationName,
-            bundleIdentifier: bundleIdentifier,
-            capability: .supported,
-            context: context,
-            inspection: inspection
-        )
-    }
-
-    private func candidateElements(around focusedElement: AXUIElement) -> [AXUIElement] {
-        var ordered: [AXUIElement] = []
-        var seen = Set<String>()
-
-        func append(_ element: AXUIElement?) {
-            guard let element else {
-                return
-            }
-
-            let identity = AXHelper.elementIdentity(for: element)
-            guard seen.insert(identity).inserted else {
-                return
-            }
-
-            ordered.append(element)
-        }
-
-        append(focusedElement)
-
-        var ancestors: [AXUIElement] = []
-        var currentElement = focusedElement
-        for _ in 0 ..< 2 {
-            guard let parent = AXHelper.parentElement(of: currentElement) else {
-                break
-            }
-
-            ancestors.append(parent)
-            append(parent)
-            currentElement = parent
-        }
-
-        // The heuristic search order is:
-        // 1. focused node
-        // 2. a couple of ancestors
-        // 3. children of those nodes
-        //
-        // This is a pragmatic compromise for apps that focus a wrapper element instead of the real
-        // editable text node. We do not try to walk the entire AX tree.
-        for node in [focusedElement] + ancestors {
-            for child in AXHelper.childElements(of: node) {
-                append(child)
-            }
-        }
-
-        return ordered
-    }
-
-    /// Extracts the AX properties Tabby needs from one candidate element near the current focus.
-    private func candidateSnapshot(for element: AXUIElement, bundleIdentifier: String) -> AXFocusCandidate {
-        let role = AXHelper.stringValue(for: kAXRoleAttribute as CFString, on: element) ?? "Unknown"
-        let subrole = AXHelper.stringValue(for: kAXSubroleAttribute as CFString, on: element)
-        let supportedAttributes = Set(AXHelper.attributeNames(on: element))
-        let supportedParameterizedAttributes = Set(AXHelper.parameterizedAttributeNames(on: element))
-        let explicitEditableFlag = supportedAttributes.contains("AXEditable")
-            ? AXHelper.boolValue(for: "AXEditable" as CFString, on: element)
-            : nil
-        let textValue = supportedAttributes.contains(kAXValueAttribute as String)
-            ? AXHelper.stringValue(for: kAXValueAttribute as CFString, on: element)
-            : nil
-        let selection = supportedAttributes.contains(kAXSelectedTextRangeAttribute as String)
-            ? AXHelper.rangeValue(for: kAXSelectedTextRangeAttribute as CFString, on: element)
-            : nil
-        let inputFrameRect = supportedAttributes.contains("AXFrame")
-            ? resolveInputFrameRect(for: element)
-            : nil
-        let caretRect = selection.flatMap {
-            resolveCaretRect(
-                for: element,
-                selection: $0,
-                supportsBoundsForRange: supportedParameterizedAttributes.contains(kAXBoundsForRangeParameterizedAttribute as String),
-                supportsFrame: supportedAttributes.contains("AXFrame"),
-                cocoaAnchorFrame: inputFrameRect,
-                textValue: textValue
-            )
-        }
-        let isSecure = isSecureElement(element: element, role: role, subrole: subrole)
-        let elementIdentifier = AXHelper.elementIdentifier(for: element, bundleIdentifier: bundleIdentifier)
-        let resolverCandidate = FocusCapabilityCandidate(
-            elementIdentifier: elementIdentifier,
-            role: role,
-            subrole: subrole,
-            editableHintScore: AXHelper.editabilityHintScore(role: role, explicitEditableFlag: explicitEditableFlag),
-            hasStrongEditabilitySignal: AXHelper.hasStrongEditabilitySignal(role: role, explicitEditableFlag: explicitEditableFlag),
-            isKnownReadOnlyRole: AXHelper.isKnownReadOnlyRole(role),
-            hasTextValue: textValue != nil,
-            hasSelectionRange: selection != nil,
-            hasCaretBounds: caretRect != nil,
-            isSecure: isSecure
-        )
-
-        return AXFocusCandidate(
-            elementIdentifier: elementIdentifier,
-            role: role,
-            subrole: subrole,
-            textValue: textValue,
-            selection: selection,
-            caretRect: caretRect,
-            inputFrameRect: inputFrameRect,
-            isSecure: isSecure,
-            resolverCandidate: resolverCandidate
-        )
-    }
-
-    /// Resolves the full input frame that the activation indicator uses as its visual anchor.
-    /// This is intentionally separate from caret resolution because the indicator tracks field
-    /// support, not the exact text insertion point.
-    private func resolveInputFrameRect(for element: AXUIElement) -> CGRect? {
-        guard let frame = AXHelper.rectValue(for: "AXFrame" as CFString, on: element), !frame.isEmpty else {
-            return nil
-        }
-
-        return AXHelper.cocoaRect(fromAccessibilityRect: frame)
-    }
-
-    /// Finds the best caret anchor available, preferring bounds-for-range and falling back to element frame.
-    /// `cocoaAnchorFrame` is the element's AXFrame already converted to Cocoa coordinates — it serves
-    /// as the ground-truth reference for detecting whether text-range rects need pixel-to-point scaling.
-    private func resolveCaretRect(
-        for element: AXUIElement,
-        selection: NSRange,
-        supportsBoundsForRange: Bool,
-        supportsFrame: Bool,
-        cocoaAnchorFrame: CGRect?,
-        textValue: String? = nil
-    ) -> CGRect? {
-        // Branch 1: Zero-length BoundsForRange at the caret position — ideal case.
-        if supportsBoundsForRange,
-           let rect = AXHelper.parameterizedRectValue(
-               for: kAXBoundsForRangeParameterizedAttribute as CFString,
-               range: NSRange(location: selection.location, length: 0),
-               on: element
-           ), !rect.isEmpty {
-            let cocoaRect = AXHelper.validatedCocoaTextRect(
-                fromAccessibilityRect: rect,
-                anchorFrame: cocoaAnchorFrame
-            )
-            return normalizedCaretRect(fromZeroLengthRangeRect: cocoaRect)
-        }
-
-        // Branch 1.5: Chromium / WebKit AXTextMarker fallback.
-        // Apps like Discord/Chrome fail NSRange queries but return a correct bounding box
-        // when we ask for the caret via their internal AXTextMarkerRange objects.
-        if let markerRect = AXHelper.textMarkerCaretRect(on: element), !markerRect.isEmpty {
-            let cocoaRect = AXHelper.validatedCocoaTextRect(
-                fromAccessibilityRect: markerRect,
-                anchorFrame: cocoaAnchorFrame
-            )
-            return normalizedCaretRect(fromZeroLengthRangeRect: cocoaRect)
-        }
-
-        // Branch 2: BoundsForRange on the character before the caret, then shift to its trailing edge.
-        if supportsBoundsForRange,
-           selection.location > 0,
-           let rect = AXHelper.parameterizedRectValue(
-               for: kAXBoundsForRangeParameterizedAttribute as CFString,
-               range: NSRange(location: selection.location - 1, length: 1),
-               on: element
-           ), !rect.isEmpty {
-            let cocoaRect = AXHelper.validatedCocoaTextRect(
-                fromAccessibilityRect: rect,
-                anchorFrame: cocoaAnchorFrame
-            )
-            return CGRect(x: cocoaRect.maxX, y: cocoaRect.minY, width: 2, height: cocoaRect.height)
-        }
-
-        // Branch 3: AXFrame fallback — no text-range data available, estimate from element bounds.
-        if supportsFrame,
-           let frame = AXHelper.rectValue(for: "AXFrame" as CFString, on: element), !frame.isEmpty {
-            let cocoaRect = AXHelper.cocoaRect(fromAccessibilityRect: frame)
-            if cocoaRect.width > 10, let text = textValue {
-                let prefix = (text as NSString).substring(to: min(selection.location, (text as NSString).length))
-                let estimatedWidthPerChar: CGFloat = 8.0
-                let estimatedX = cocoaRect.minX + (CGFloat(prefix.count) * estimatedWidthPerChar)
-                let clampedX = min(estimatedX, cocoaRect.maxX)
-                return CGRect(x: clampedX, y: cocoaRect.minY, width: 2, height: cocoaRect.height)
-            }
-            return cocoaRect
-        }
-
-        return nil
-    }
-
-    /// Some browser-based editors return a full line fragment for a zero-length range instead of
-    /// a narrow caret box. Collapse those wide rects back down to a caret-like anchor.
-    private func normalizedCaretRect(fromZeroLengthRangeRect rect: CGRect) -> CGRect {
-        guard !rect.isEmpty else {
-            return rect
-        }
-
-        let normalizedWidth: CGFloat = 2
-        if rect.width <= 6 {
-            return CGRect(x: rect.minX, y: rect.minY, width: normalizedWidth, height: rect.height)
-        }
-
-        return CGRect(x: rect.minX, y: rect.minY, width: 2, height: rect.height)
-    }
-
-    /// Detects secure inputs so Tabby can intentionally refuse to operate in sensitive fields.
-    private func isSecureElement(element: AXUIElement, role: String, subrole: String?) -> Bool {
-        // There is no single universal secure-input flag across all host apps, so we fall back to
-        // conservative string matching on the AX metadata that browsers and native apps commonly expose.
-        let secureMarkers = [
-            role.lowercased(),
-            subrole?.lowercased() ?? "",
-            AXHelper.stringValue(for: kAXDescriptionAttribute as CFString, on: element)?.lowercased() ?? "",
-            AXHelper.stringValue(for: kAXTitleAttribute as CFString, on: element)?.lowercased() ?? "",
-        ]
-
-        return secureMarkers.contains { marker in
-            marker.contains("secure") || marker.contains("password")
-        }
     }
 }
