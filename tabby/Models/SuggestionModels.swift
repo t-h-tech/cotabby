@@ -28,6 +28,12 @@ enum SuggestionWordCountPreset: String, CaseIterable, Equatable, Hashable, Senda
         }
     }
 
+    /// Compact labels are useful in tight menu-bar controls where the full descriptive copy
+    /// would dominate the layout.
+    var compactLabel: String {
+        "\(rawValue) w"
+    }
+
     var promptInstruction: String {
         switch self {
         case .oneToThree:
@@ -71,6 +77,15 @@ enum SuggestionPromptMode: String, CaseIterable, Equatable, Hashable, Sendable, 
             return "Guided"
         case .prefixOnly:
             return "Prefix Only (recommended)"
+        }
+    }
+
+    var compactLabel: String {
+        switch self {
+        case .guided:
+            return "Guided"
+        case .prefixOnly:
+            return "Prefix Only"
         }
     }
 

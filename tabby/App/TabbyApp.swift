@@ -18,12 +18,10 @@ struct TabbyApp: App {
                 runtimeModel: appDelegate.runtimeModel,
                 modelDownloadManager: appDelegate.modelDownloadManager,
                 focusModel: appDelegate.focusModel,
-                suggestionCoordinator: appDelegate.suggestionCoordinator,
-                welcomeCoordinator: appDelegate.welcomeCoordinator
+                suggestionCoordinator: appDelegate.suggestionCoordinator
             )
         } label: {
             MenuBarStatusLabelView(
-                focusModel: appDelegate.focusModel,
                 suggestionCoordinator: appDelegate.suggestionCoordinator
             )
         }

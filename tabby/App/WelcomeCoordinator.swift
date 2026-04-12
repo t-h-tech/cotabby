@@ -15,7 +15,6 @@ final class WelcomeCoordinator: NSObject, NSWindowDelegate {
     private let userDefaults: UserDefaults
 
     private var welcomeWindowController: NSWindowController?
-    private var guideWindowController: NSWindowController?
 
     private static let hasShownWelcomeDefaultsKey = "hasShownWelcomeWindow"
 
@@ -96,47 +95,6 @@ final class WelcomeCoordinator: NSObject, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Manual entry point for opening the in-depth usage guide from the menu.
-    func showGuide() {
-        if let window = guideWindowController?.window {
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-
-        let hostingController = NSHostingController(
-            rootView: GuideView(
-                onDismiss: { [weak self] in
-                    self?.dismissGuide()
-                }
-            )
-        )
-
-        let window = NSWindow(
-            contentRect: CGRect(x: 0, y: 0, width: 620, height: 720),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Tabby Guide"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = true
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.level = .normal
-        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        window.delegate = self
-        window.contentViewController = hostingController
-
-        let windowController = NSWindowController(window: window)
-        guideWindowController = windowController
-
-        NSApp.activate(ignoringOtherApps: true)
-        windowController.showWindow(nil)
-        window.makeKeyAndOrderFront(nil)
-    }
-
     func windowWillClose(_ notification: Notification) {
         guard let closingWindow = notification.object as? NSWindow else {
             return
@@ -145,17 +103,9 @@ final class WelcomeCoordinator: NSObject, NSWindowDelegate {
         if closingWindow == welcomeWindowController?.window {
             welcomeWindowController = nil
         }
-
-        if closingWindow == guideWindowController?.window {
-            guideWindowController = nil
-        }
     }
 
     private func dismissWelcome() {
         welcomeWindowController?.close()
-    }
-
-    private func dismissGuide() {
-        guideWindowController?.close()
     }
 }
