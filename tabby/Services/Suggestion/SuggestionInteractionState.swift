@@ -54,12 +54,15 @@ final class SuggestionInteractionState {
         return session
     }
 
+    /// Uses process-level identity instead of AX element identity because Chrome recycles
+    /// AX node tokens between polls, making `CFHash`-based `elementIdentifier` unstable.
+    /// Intra-process field switches are caught downstream by content/text guards.
     func hasFocusedElementChanged(comparedTo focusedContext: FocusedInputSnapshot) -> Bool {
         guard let currentContext else {
             return false
         }
 
-        return currentContext.elementIdentifier != focusedContext.elementIdentifier
+        return currentContext.processIdentifier != focusedContext.processIdentifier
     }
 
     /// Reconciles the currently active session against the latest AX snapshot and stores the
@@ -136,7 +139,7 @@ final class SuggestionInteractionState {
             // We intentionally allow acceptance while the overlay is temporarily hidden.
             // That hidden state usually means "waiting for host app caret sync" after a prior
             // partial acceptance, not "there is no active suggestion anymore."
-            guard liveContext.elementIdentifier == activeSession.baseContext.elementIdentifier else {
+            guard liveContext.processIdentifier == activeSession.baseContext.processIdentifier else {
                 return .invalid("Tab passed through because the focused field changed.")
             }
 

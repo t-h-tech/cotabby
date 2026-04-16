@@ -32,7 +32,7 @@ final class OverlayController: SuggestionOverlayControlling {
         panel.isOpaque = false
         panel.ignoresMouseEvents = true
         panel.hasShadow = false
-        panel.level = .statusBar
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         return panel
     }()
@@ -48,12 +48,13 @@ final class OverlayController: SuggestionOverlayControlling {
         contentView.layoutSubtreeIfNeeded()
         let contentSize = contentView.fittingSize
 
-        // Prefer a caret-adjacent anchor and align against the upper portion of the reported
-        // text rect. Browser editors often report a taller line fragment than a native caret box,
-        // and centering against that fragment makes ghost text sit visibly too low.
+        // Vertically center the ghost text within the caret rect. When the caret rect is a
+        // tight line-height box this looks identical to top-alignment, but when it's oversized
+        // (e.g. AXFrame fallback returning the full text area) the text lands at the visual
+        // midpoint instead of floating at the top edge.
         let origin = CGPoint(
             x: caretRect.maxX + 6,
-            y: caretRect.minY + max(caretRect.height - contentSize.height - 1, 0)
+            y: caretRect.midY - contentSize.height / 2
         )
         let frame = CGRect(origin: origin, size: contentSize)
 
@@ -79,13 +80,18 @@ private final class OverlayPanel: NSPanel {
 /// Keeping the rendered content separate from the window controller makes styling easier to evolve
 /// without touching the AppKit positioning code.
 private struct GhostSuggestionView: View {
+    @Environment(\.colorScheme) var colorScheme
     let text: String
-
+    
+    
+    var ghostColor: Color {
+        colorScheme  == .dark ?  Color(red: 0.65, green: 0.65, blue: 0.65) : Color(red:0.45, green: 0.45, blue:0.45)
+    }
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(text)
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(Color.secondary.opacity(0.78))
+                .font(.system(size: 14))
+                .foregroundStyle(ghostColor)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: true)
 
@@ -98,21 +104,47 @@ private struct GhostSuggestionView: View {
 /// Visual hint that teaches the user how to accept the suggestion.
 private struct GhostKeycap: View {
     let label: String
+    @Environment(\.colorScheme) var colorScheme
+
+    // 1. Explicit colors to prevent alpha-blending bugs in transparent windows
+    var textColor: Color {
+        colorScheme == .dark ? Color(white: 0.65) : Color(white: 0.45)
+    }
+    
+    var bgColor: Color {
+        colorScheme == .dark ? Color(white: 0.18) : Color(white: 0.95)
+    }
+
+    var borderColor: Color {
+        colorScheme == .dark ? Color(white: 0.3) : Color(white: 0.8)
+    }
 
     var body: some View {
-        Text(label)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundStyle(Color.secondary.opacity(0.72))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
-            )
-            .fixedSize(horizontal: true, vertical: true)
+        // 2. Added HStack to incorporate the native symbol
+        HStack(spacing: 3) {
+            if label.lowercased() == "tab" {
+                Text("⇥")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+            }
+            Text(label)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+        }
+        .foregroundStyle(textColor)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(bgColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        )
+        // 3. Micro-shadow to lift the pill off the text editor background
+        .shadow(
+            color: Color.black.opacity(colorScheme == .dark ? 0.4 : 0.08),
+            radius: 1, x: 0, y: 1
+        )
+        .fixedSize(horizontal: true, vertical: true)
     }
 }

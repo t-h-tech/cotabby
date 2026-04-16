@@ -111,9 +111,11 @@ struct FocusedInputSnapshot: Equatable {
 
     /// The signature lets later pipeline stages detect whether a completion result is stale.
     /// This is the same idea you would use in a React app with a derived cache key.
+    /// Content-only fingerprint for staleness detection. Deliberately excludes `elementIdentifier`
+    /// because Chrome recycles AX node tokens between polls, making `CFHash`-based identity unstable.
+    /// Text and selection state is sufficient to detect real content changes.
     var contentSignature: String {
         [
-            elementIdentifier,
             String(selection.location),
             String(selection.length),
             precedingText,

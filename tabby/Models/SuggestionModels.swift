@@ -175,9 +175,10 @@ struct FocusedInputContext: Equatable, Sendable {
         self.generation = generation
     }
 
+    /// Content-only fingerprint — mirrors `FocusedInputSnapshot.contentSignature`.
+    /// See that type's doc comment for why `elementIdentifier` is excluded.
     var contentSignature: String {
         [
-            elementIdentifier,
             String(selection.location),
             String(selection.length),
             precedingText,

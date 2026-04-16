@@ -22,6 +22,8 @@ struct SuggestionOverlayPresenter {
         guard !text.isEmpty else {
             return hide(reason: "Overlay hidden because the suggestion text was empty.")
         }
+        
+        print("SHOW")
 
         guard previousState != .visible(text: text, caretRect: caretRect) else {
             return nil
@@ -40,6 +42,7 @@ struct SuggestionOverlayPresenter {
     }
 
     func hide(reason: String) -> String {
+        print("HIDDEN")
         overlayController.hide(reason: reason)
         return reason
     }

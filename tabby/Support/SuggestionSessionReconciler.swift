@@ -52,7 +52,10 @@ enum SuggestionSessionReconciler {
         with liveContext: FocusedInputContext,
         pendingInsertionConsumedCount: Int?
     ) -> SuggestionSessionReconciliation {
-        guard liveContext.elementIdentifier == session.baseContext.elementIdentifier else {
+        // Process-level identity check instead of AX element identity. Chrome recycles AX
+        // node tokens between polls, making CFHash-based elementIdentifier unstable. The text
+        // guards below catch intra-process field switches via content divergence.
+        guard liveContext.processIdentifier == session.baseContext.processIdentifier else {
             return .invalid("Overlay hidden because the focused field changed.")
         }
 
