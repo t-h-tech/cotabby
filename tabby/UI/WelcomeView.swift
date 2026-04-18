@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// File overview:
@@ -61,22 +62,18 @@ private enum WelcomeStep: Int, Comparable {
 private extension WelcomeView {
     var welcomeStep: some View {
         VStack(spacing: 24) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.regularMaterial)
-                    .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
-
-                Image(systemName: "pawprint.fill")
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(.primary)
-            }
-            .frame(width: 64, height: 64)
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 72, height: 72)
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
 
             VStack(spacing: 8) {
                 Text("Welcome to tabby")
                     .font(.system(size: 28, weight: .semibold, design: .rounded))
 
-                Text("AI autocomplete that runs entirely on your Mac.")
+                Text("AI autocomplete in any text field, all done locally.")
                     .font(.system(size: 15, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -137,7 +134,7 @@ private extension WelcomeView {
         let isAvailable = foundationModelAvailabilityService.isAvailable
 
         return EngineCard(
-            systemImage: "apple.logo",
+            artworkName: "apple_intelligence",
             title: "Apple Intelligence",
             subtitle: isAvailable
                 ? "Built into macOS. No download needed."
@@ -154,7 +151,7 @@ private extension WelcomeView {
 
         return VStack(spacing: 0) {
             EngineCard(
-                systemImage: "cpu",
+                artworkName: "llama",
                 title: "Open Source",
                 subtitle: "Runs a local model. One-time download.",
                 isSelected: isSelected,
@@ -300,17 +297,12 @@ private extension WelcomeView {
 /// Selectable engine card with glass-material background.
 /// When selected, shows an accent-tinted border and checkmark. When unavailable, dims the content.
 private struct EngineCard: View {
-    let systemImage: String
+    let artworkName: String
     let title: String
     let subtitle: String
     let isSelected: Bool
     let isAvailable: Bool
     let action: () -> Void
-
-    private var iconColor: Color {
-        if !isAvailable { return .secondary }
-        return isSelected ? .accentColor : .primary
-    }
 
     var body: some View {
         Button(action: {
@@ -319,15 +311,11 @@ private struct EngineCard: View {
             }
         }) {
             HStack(spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.12)) : AnyShapeStyle(.quaternary.opacity(0.6)))
-
-                    Image(systemName: systemImage)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(iconColor)
-                }
-                .frame(width: 32, height: 32)
+                EngineArtworkThumbnail(
+                    artworkName: artworkName,
+                    isSelected: isSelected,
+                    isAvailable: isAvailable
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -364,6 +352,45 @@ private struct EngineCard: View {
         }
         .buttonStyle(.plain)
         .disabled(!isAvailable)
+    }
+}
+
+/// Purpose-built thumbnail tile for onboarding engine artwork.
+/// We use `scaledToFill` inside a fixed rounded frame so square and landscape assets can share
+/// one card layout while still cropping intentionally instead of shrinking into an icon box.
+private struct EngineArtworkThumbnail: View {
+    let artworkName: String
+    let isSelected: Bool
+    let isAvailable: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(
+                    isSelected
+                        ? AnyShapeStyle(Color.accentColor.opacity(0.08))
+                        : AnyShapeStyle(.quaternary.opacity(0.45))
+                )
+
+            Image(artworkName)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFill()
+                .frame(width: 76, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .opacity(isAvailable ? 1.0 : 0.55)
+        }
+        .frame(width: 76, height: 56)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    isSelected && isAvailable
+                        ? Color.accentColor.opacity(0.22)
+                        : Color.white.opacity(0.08),
+                    lineWidth: isSelected && isAvailable ? 1.0 : 0.5
+                )
+        )
+        .accessibilityHidden(true)
     }
 }
 
