@@ -85,10 +85,6 @@ The local model runtime is intentionally split:
 
 That split matters because runtime lifecycle concerns change at a different rate than prompt strategy or output cleanup.
 
-## Developer Utilities
-
-`tabby_screenshot_smoke.swift` is a developer-only utility for legacy screenshot/OCR diagnostics outside the main app flow. The visual pipeline is currently deprecated in live requests, so keep this utility isolated and simple.
-
 ## Safe Change Order
 
 If you need to change behavior, prefer this order:

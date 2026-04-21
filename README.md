@@ -87,4 +87,4 @@ Set your signing team in `Signing & Capabilities`, then build and run the `tabby
 xcodebuild -project tabby.xcodeproj -scheme tabby -configuration Debug build
 ```
 
-On first launch, complete onboarding, grant permissions, pick an engine, and (if Open Source) download or drop in a GGUF. Release and distribution details live in [`RELEASING.md`](RELEASING.md).
+On first launch, complete onboarding, grant permissions, pick an engine, and (if Open Source) download or drop in a GGUF.
