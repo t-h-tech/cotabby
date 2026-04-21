@@ -16,10 +16,10 @@ enum RuntimeBootstrapState: Equatable, Sendable {
         switch self {
         case .idle:
             return "Idle"
-        case let .starting(detail),
-            let .loading(detail),
-            let .ready(detail),
-            let .failed(detail):
+        case .starting(let detail),
+            .loading(let detail),
+            .ready(let detail),
+            .failed(let detail):
             return detail
         }
     }
@@ -34,6 +34,7 @@ struct RuntimeModelOption: Equatable, Hashable, Sendable, Identifiable {
 
     var id: String { filename }
     var displayName: String { RuntimeModelCatalog.displayName(for: filename) }
+    var actualModelName: String { filename }
 }
 
 /// Downloadable model metadata used by onboarding and menu-based model installation.
@@ -42,9 +43,12 @@ struct DownloadableRuntimeModel: Equatable, Hashable, Sendable, Identifiable {
     let filename: String
     let displayName: String
     let downloadURL: URL
+    let approximateSizeInGigabytes: Double
     let alternateFilenames: [String]
 
     var id: String { filename }
+    var actualModelName: String { filename }
+    var approximateSizeLabel: String { String(format: "~%.1f GB", approximateSizeInGigabytes) }
 
     var allKnownFilenames: [String] {
         [filename] + alternateFilenames
@@ -54,11 +58,13 @@ struct DownloadableRuntimeModel: Equatable, Hashable, Sendable, Identifiable {
         filename: String,
         displayName: String,
         downloadURL: URL,
+        approximateSizeInGigabytes: Double,
         alternateFilenames: [String] = []
     ) {
         self.filename = filename
         self.displayName = displayName
         self.downloadURL = downloadURL
+        self.approximateSizeInGigabytes = approximateSizeInGigabytes
         self.alternateFilenames = alternateFilenames
     }
 }
@@ -80,19 +86,31 @@ enum RuntimeModelCatalog {
     /// Canonical downloadable model list shown in Welcome and menu UI.
     static let downloadableModels: [DownloadableRuntimeModel] = [
         DownloadableRuntimeModel(
-            filename: "Qwen3-0.6B-Q4_K_M.gguf",
-            displayName: displayName(for: "Qwen3-0.6B-Q4_K_M.gguf"),
-            downloadURL: URL(string: "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf?download=true")!
-        ),
-        DownloadableRuntimeModel(
             filename: "gemma-3-1b-it-Q4_K_M.gguf",
             displayName: displayName(for: "gemma-3-1b-it-Q4_K_M.gguf"),
-            downloadURL: URL(string: "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf?download=true")!
+            downloadURL: URL(
+                string:
+                    "https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf?download=true"
+            )!,
+            approximateSizeInGigabytes: 0.8
+        ),
+        DownloadableRuntimeModel(
+            filename: "Qwen3-0.6B-Q4_K_M.gguf",
+            displayName: displayName(for: "Qwen3-0.6B-Q4_K_M.gguf"),
+            downloadURL: URL(
+                string:
+                    "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf?download=true"
+            )!,
+            approximateSizeInGigabytes: 0.4
         ),
         DownloadableRuntimeModel(
             filename: "gemma-3n-E4B-it-Q4_K_M.gguf",
             displayName: displayName(for: "gemma-3n-E4B-it-Q4_K_M.gguf"),
-            downloadURL: URL(string: "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf?download=true")!
+            downloadURL: URL(
+                string:
+                    "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf?download=true"
+            )!,
+            approximateSizeInGigabytes: 3.5
         ),
     ]
 }
@@ -148,7 +166,7 @@ enum LlamaRuntimeError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case let .unavailable(message), let .generationFailed(message):
+        case .unavailable(let message), .generationFailed(let message):
             return message
         case .cancelled:
             return "Runtime work was cancelled."

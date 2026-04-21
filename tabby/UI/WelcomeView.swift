@@ -93,8 +93,8 @@ private enum WelcomeStep: Int, Comparable {
 
 // MARK: - Step 1: Welcome
 
-private extension WelcomeView {
-    var welcomeStep: some View {
+extension WelcomeView {
+    fileprivate var welcomeStep: some View {
         VStack(spacing: 24) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
@@ -123,8 +123,8 @@ private extension WelcomeView {
 
 // MARK: - Step 2: Permissions
 
-private extension WelcomeView {
-    var permissionsStep: some View {
+extension WelcomeView {
+    fileprivate var permissionsStep: some View {
         WelcomePermissionStepView(
             permissionManager: permissionManager,
             permissionGuidanceController: permissionGuidanceController,
@@ -136,8 +136,8 @@ private extension WelcomeView {
 
 // MARK: - Step 3: Choose Model (combined engine + model)
 
-private extension WelcomeView {
-    var chooseModelStep: some View {
+extension WelcomeView {
+    fileprivate var chooseModelStep: some View {
         VStack(spacing: 24) {
             VStack(spacing: 8) {
                 Text("Choose a Model")
@@ -163,7 +163,7 @@ private extension WelcomeView {
         }
     }
 
-    var appleIntelligenceCard: some View {
+    fileprivate var appleIntelligenceCard: some View {
         let isSelected = suggestionSettings.selectedEngine == .appleIntelligence
         let isAvailable = foundationModelAvailabilityService.isAvailable
 
@@ -180,14 +180,14 @@ private extension WelcomeView {
         }
     }
 
-    var llamaOpenSourceCard: some View {
+    fileprivate var llamaOpenSourceCard: some View {
         let isSelected = suggestionSettings.selectedEngine == .llamaOpenSource
 
         return VStack(spacing: 0) {
             EngineCard(
                 artworkName: "llama",
                 title: "Open Source",
-                subtitle: "Runs a local model. One-time download.",
+                subtitle: "Runs locally on this Mac. Download a model to get started.",
                 isSelected: isSelected,
                 isAvailable: true
             ) {
@@ -229,7 +229,7 @@ private extension WelcomeView {
         .animation(.spring(duration: 0.3), value: isSelected)
     }
 
-    var canContinueFromModelStep: Bool {
+    fileprivate var canContinueFromModelStep: Bool {
         switch suggestionSettings.selectedEngine {
         case .appleIntelligence:
             return foundationModelAvailabilityService.isAvailable
@@ -238,16 +238,16 @@ private extension WelcomeView {
         }
     }
 
-    var modelStepDisabledHint: String {
+    fileprivate var modelStepDisabledHint: String {
         switch suggestionSettings.selectedEngine {
         case .appleIntelligence:
             return "Apple Intelligence is not available on this Mac."
         case .llamaOpenSource:
-            return "Download at least one model to continue."
+            return "Add or download at least one model to continue."
         }
     }
 
-    var hasAtLeastOneModel: Bool {
+    fileprivate var hasAtLeastOneModel: Bool {
         modelDownloadManager.models.contains { model in
             modelDownloadManager.state(for: model) == .downloaded
         } || !runtimeModel.availableModels.isEmpty
@@ -256,8 +256,8 @@ private extension WelcomeView {
 
 // MARK: - Step 4: Done
 
-private extension WelcomeView {
-    var doneStep: some View {
+extension WelcomeView {
+    fileprivate var doneStep: some View {
         VStack(spacing: 24) {
             ZStack {
                 Circle()
@@ -350,7 +350,8 @@ private struct EngineCard: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(
-                        isSelected && isAvailable ? Color.accentColor.opacity(0.4) : Color.white.opacity(0.08),
+                        isSelected && isAvailable
+                            ? Color.accentColor.opacity(0.4) : Color.white.opacity(0.08),
                         lineWidth: isSelected && isAvailable ? 1.5 : 0.5
                     )
             )

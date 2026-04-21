@@ -1,248 +1,90 @@
 # Tabby
 
 <p align="center">
-	<img width="128" alt="Tabby logo" src="https://github.com/user-attachments/assets/8a67095e-4d03-4055-8d4c-8871335152dd" />
+  <img width="128" alt="Tabby logo" src="https://github.com/user-attachments/assets/8a67095e-4d03-4055-8d4c-8871335152dd" />
 </p>
 
 <p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
+  <em>On-device AI autocomplete for macOS text fields.</em>
 </p>
-
-## Video Demo
-
-[https://www.youtube.com/watch?v=CGduGREZtlI&t=176s](https://www.youtube.com/watch?v=CGduGREZtlI&t=176s)
 
 <p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
+  <strong>1st Place — Ramp Emerging Talent 2026 AI Hackathon</strong>
 </p>
 
-## Hackathon Prompt
+## Demo
 
-**Build something that gives people time back in their day using AI.**
+[Watch on YouTube](https://www.youtube.com/watch?v=p3TIgxQFQGE)
 
-When I read that prompt, I asked myself what actually steals time from my day. Then I realized, typing is one.
+## What It Does
 
-I am a slower typer, but I need to type all sorts of things all day, for example, messages, docs, notes, emails, commits, and random drafts.
+Tabby is a menu bar app that brings inline autocomplete to the text field you're already using. Keep typing in your host app — Tabby watches the focused field, generates a continuation, and renders it as ghost text next to your caret. Press `Tab` to accept a chunk, keep pressing to advance, or just keep typing to diverge.
 
-**One might suggest using an AI tool like ChatGPT or Gemini.**
+Everything runs on-device. No hosted API, no cloud round-trip.
 
-But in practice, switching to a separate app, starting a conversation, and getting back a block of text breaks the natural flow of writing. It forces constant context switching and small manual edits.
+## Engines
 
-**Well, how about AI dictation tools like Wispr Flow?**
+**Apple Intelligence** — uses Apple's on-device `FoundationModels` runtime. No download required. Availability depends on your Mac; Tabby checks at runtime and tells you why if it's unavailable.
 
-They seem better, but they depend on a quiet environment, and speaking often moves faster than my thoughts. When I am trying to carefully shape a message, dictation can feel rushed rather than helpful.
+**Open Source** — runs local GGUF models in-process through llama.cpp via `llama.swift`. Built-in downloadable models:
 
-**That led to an idea: what if we had inline AI autocomplete that works in any app.**
+| Model | File | Size |
+|---|---|---|
+| `tabby-fast-1` | `Qwen3-0.6B-Q4_K_M.gguf` | ~0.4 GB |
+| `tabby-balanced-1` | `gemma-3-1b-it-Q4_K_M.gguf` | ~0.8 GB |
+| `tabby-depth-1` | `gemma-3n-E4B-it-Q4_K_M.gguf` | ~3.5 GB |
 
-<p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
-</p>
+You can also drop your own `.gguf` files into Tabby's models folder and hit Refresh. The Open Source engine supports a fast prefix-continuation mode and a "Use My Instructions" mode that folds your custom AI instructions into the prompt.
 
-## Solution
-
-Tabby is a menu bar app that adds local AI autocomplete to any text field you are already in.
-
-- suggestion appears as ghost text overlay near your caret
-- press Tab to accept each word
-- keep typing and truly flow.
-
-No browser hop. No copy/paste loop. No speaking out loud.
-
-<p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
-</p>
-
-## Why This Gives Time Back
-
-Tabby saves time in the small moments that happen constantly:
-
-- finishing common sentence patterns
-- reducing typo/rewrite loops
-- removing context-switch overhead
-- keeping writing flow in one place, no need to move writing into a different editor
-
-A few seconds saved per message adds up quickly over a full day.
-
-<p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
-</p>
-
-## How It Works (High Level)
-
-- Tabby is a macOS menu bar app built in Swift, with SwiftUI for UI and AppKit/Accessibility APIs for system integration.
-- Focus detection runs through Accessibility: we find the active editable element, validate required capabilities, and extract text value, selection range, and caret bounds.
-- Caret anchoring uses AX range bounds and fallback heuristics so ghost text can be placed near the live insertion point across different apps.
-- Input monitoring uses a global key tap to detect typing/navigation and Tab acceptance, then debounces generation to avoid noisy triggers.
-- Prompting supports two modes:
-  - Guided mode: structured inline instructions.
-  - Prefix Only mode: raw prefix continuation with no extra instruction framing.
-- Models are local GGUF files running in-process via llama.cpp through LlamaSwift (no remote API endpoint dependency).
-- Models are downloaded on demand after install and loaded from the local runtime folder, so app updates and model updates stay independent.
-- Suggestion flow is continuous: generate a tail, render ghost text at the caret, accept with Tab in chunks, and reject stale outputs when context changes.
-- Screenshot/OCR visual-context pipeline is currently deprecated and not injected into live suggestion requests while context collection is being rebuilt.
-
-<p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
-</p>
-
-## Codebase Guide
-
-If you are maintaining Tabby, start with this mental model:
-
-- New to Swift or macOS app development? Read [`SWIFT_FOR_JS_DEVELOPERS.md`](SWIFT_FOR_JS_DEVELOPERS.md) first. It translates the core Swift/AppKit/Accessibility concepts in this repo into JavaScript terms.
-
-- `tabby/App/`: lifecycle ownership and composition root
-  - `TabbyApp.swift` is the SwiftUI entry point
-  - `TabbyAppEnvironment.swift` builds the long-lived dependency graph
-  - `AppDelegate.swift` owns launch/shutdown wiring and cross-subsystem subscriptions
-  - `SuggestionCoordinator.swift` plus `SuggestionCoordinator+*.swift` orchestrate the inline-completion state machine
-- `tabby/UI/`: presentation only
-  - menu bar content, welcome flow, and static guide views live here
-- `tabby/Services/`: side effects and OS boundaries
-  - Accessibility polling, input monitoring, overlay windows, model runtime, downloads, and legacy visual-context scaffolding
-- `tabby/Models/`: shared value types and state contracts
-  - suggestion sessions, focus snapshots, runtime diagnostics, and legacy visual-context state
-- `tabby/Support/`: pure helper logic and low-level bridging
-  - Accessibility helpers, capability scoring, model-file resolution
-
-The main runtime flow is:
-
-1. `FocusTracker` polls the current focused AX element and reduces it into a `FocusSnapshot`.
-2. `InputMonitor` listens for global key events and classifies them into a smaller app-specific event model.
-3. `SuggestionCoordinator` combines focus state, input events, user settings, and runtime availability.
-4. `LlamaSuggestionEngine` asks `LlamaRuntimeManager` for a continuation and normalizes the result.
-5. `OverlayController` renders ghost text near the caret, and `SuggestionInserter` commits accepted text back into the host app.
-
-For a fuller maintainer walkthrough, read [`ARCHITECTURE.md`](ARCHITECTURE.md).
-
-When debugging:
-
-- Start with `TabbyAppEnvironment.swift` and `AppDelegate.swift` to understand ownership.
-- Read `SuggestionCoordinator.swift` and the `SuggestionCoordinator+*.swift` files next to understand the user-visible state machine.
-- Use `FocusTracker.swift` and `AXHelper.swift` when the bug is app compatibility or caret placement.
-- Use `LlamaRuntimeManager.swift` for generation latency; `ScreenshotContextGenerator.swift` is legacy/deprecated scaffolding during the context rebuild.
-
-<p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
-</p>
-
-## Quick Demo Flow For Judges
-
-1. Open Tabby.
-2. Type in any supported text field.
-3. See ghost text suggestion.
-4. Press Tab to accept.
-5. Keep typing without leaving your app.
-
-<p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
-</p>
-
-## Run Locally
-
-1. Open source code in XCode
-2. Build the project
-3. Activate necessary permissions in macOS
-4. Download GGUF models into runtime folder
-5. Enjoy!
-
-CLI build:
-
-```bash
-xcodebuild -project tabby.xcodeproj -scheme tabby -configuration Debug -sdk macosx build
-```
-
-<p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
-</p>
-
-## What's Next
-
-- Improve compatibility across more macOS apps, since some editors still break focus detection or place ghost overlays in the wrong position.
-- Make generation faster by optimizing runtime settings and tightening prompt construction so suggestions arrive with lower latency.
-- Add memory persistence so Tabby can remember user writing patterns and useful context across sessions.
-- Add deeper personalization controls (tone, style, brevity, domain preferences) so suggestions feel tailored per user.
-
-<p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
-</p>
-
-## Installation (DMG)
+## Install
 
 1. Download the latest `Tabby.dmg` from GitHub Releases.
-2. Open the DMG.
-3. Drag `Tabby.app` into `Applications`.
-4. Open `Applications` and launch Tabby.
-5. Grant permissions when prompted:
-   - Accessibility (required)
-   - Input Monitoring (required)
-   - Screen Recording (optional, only for deprecated screenshot/OCR tooling)
-6. Download a model from the Welcome screen, or add your own `.gguf` into the model folder.
-7. If you manually add a model file, press **Refresh Model List** in Tabby.
+2. Drag `Tabby.app` into `Applications` and launch it.
+3. Grant **Accessibility** and **Input Monitoring** when prompted.
+4. Pick an engine — Apple Intelligence if available, otherwise Open Source + a model.
+5. Start typing in any supported editable field.
 
-If macOS blocks launch on first open, use one of these:
+If macOS blocks first launch, right-click `Tabby.app` → `Open`, or allow it in `System Settings → Privacy & Security`.
 
-- Right click `Tabby.app` -> **Open**.
-- Or go to **System Settings -> Privacy & Security** and click **Open Anyway**.
+### Why those permissions?
 
-<p align="center">
-	<img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/rainbow.png" alt="rainbow line" />
-</p>
+- **Accessibility** — read the focused text field's value and caret position.
+- **Input Monitoring** — detect global `Tab` presses for acceptance.
 
-## Local Development Setup (In Depth)
+## Features
 
-### Prerequisites
+- Ghost text rendered live next to your caret
+- Partial `Tab` acceptance — take a chunk, keep the tail alive, press again to continue
+- Menu bar quick controls: enable, engine, model, indicator mode, completion length
+- Settings for launch at login, ghost text color, prompt mode, custom AI instructions, model downloads, and updates
+- Activity indicators that can be hidden, anchored to the caret, or shown as a field-edge icon
+- Accepted-word counter
 
-1. macOS machine (Apple Silicon recommended for local model performance).
-2. Xcode (latest stable) installed.
-3. Xcode Command Line Tools installed.
-4. Git installed.
+**Requires macOS 26.0 or later.** Behavior depends on what each host app exposes through the Accessibility APIs — some fields only provide coarse caret geometry, so Tabby falls back to more conservative placement.
 
-### 1) Clone and Open
+## How It Works
 
-1. Clone the repository.
-2. Open `tabby.xcodeproj` in Xcode.
-3. Select the `tabby` scheme.
+Tabby tracks the focused Accessibility element and resolves caret geometry with a layered strategy: exact bounds-for-range, text-marker fallback for browsers, nested `AXStaticText` geometry, and conservative full-frame estimation when that's all the app gives up.
 
-### 2) Signing and Build
+A coordinator combines focus state, input events, settings, permissions, and runtime availability, then builds a request with a truncated prefix and your selected length preset. It routes to the active engine, normalizes the output into a short continuation, and renders ghost text near the caret.
 
-1. In Xcode target settings, set your signing team under **Signing & Capabilities**.
-2. Build and run from Xcode.
-3. For CLI builds, run:
+On `Tab`, Tabby writes the accepted chunk back and keeps a live session with the full generation, how much was accepted, and what remains. That's why partial acceptance works — and why short-lived Accessibility lag in browser editors doesn't kill the suggestion.
+
+> The codebase contains a screenshot/OCR visual-context subsystem, but it's deprecated for live autocomplete and Screen Recording is not required.
+
+## Local Development
+
+Requires Xcode and Command Line Tools. Apple Silicon is strongly recommended for local model performance.
 
 ```bash
-xcodebuild -project tabby.xcodeproj -scheme tabby -configuration Debug -sdk macosx build
+git clone <repo>
+open tabby.xcodeproj
 ```
 
-### 3) First-Run Permissions
+Set your signing team in `Signing & Capabilities`, then build and run the `tabby` target. Or from the CLI:
 
-1. Enable **Accessibility** so Tabby can read focused field/caret context.
-2. Enable **Input Monitoring** so Tabby can detect typing and Tab acceptance.
-3. Optionally enable **Screen Recording** only for deprecated screenshot/OCR diagnostics.
-
-### 4) Model Setup
-
-1. Open Tabby and use the built-in model download buttons.
-2. Or manually place any `.gguf` file in the runtime folder:
-
-```text
-~/Library/Application Support/Tabby/LlamaRuntime
+```bash
+xcodebuild -project tabby.xcodeproj -scheme tabby -configuration Debug build
 ```
 
-3. Press **Refresh Model List** in the app.
-4. Select your model from the Model picker.
-
-### 5) Recommended Defaults (Current)
-
-1. Model: `tabby-balanced-1` (recommended) when available.
-2. Prompt mode: Prefix Only (recommended).
-3. Suggestion length: 3-7 words (recommended).
-
-### 6) Troubleshooting
-
-1. No suggestions appearing:
-   - Re-check Accessibility and Input Monitoring permissions.
-2. Model missing in picker:
-   - Confirm file extension is `.gguf` and click **Refresh Model List**.
-3. Overlay placement issues in specific apps:
-   - Switch focus away and back, then retry typing.
+On first launch, complete onboarding, grant permissions, pick an engine, and (if Open Source) download or drop in a GGUF. Release and distribution details live in [`RELEASING.md`](RELEASING.md).

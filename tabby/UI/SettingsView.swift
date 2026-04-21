@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// File overview:
@@ -19,6 +20,8 @@ struct SettingsView: View {
 
     let onShowWelcome: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+
     @State private var pendingDeletionModel: RuntimeModelOption?
 
     var body: some View {
@@ -26,13 +29,13 @@ struct SettingsView: View {
             settingsHeader
             generalSection
             autocompleteSection
-            guidedModeSection
+            customInstructionsSection
             permissionsSection
             localModelsSection
             updatesSection
         }
         .formStyle(.grouped)
-        .frame(minWidth: 560, minHeight: 520)
+        .frame(minWidth: 620, minHeight: 560)
         .onAppear {
             refreshAppleIntelligenceAvailabilityIfNeeded()
             launchAtLoginService.refresh()
@@ -108,7 +111,32 @@ struct SettingsView: View {
         Section("Autocomplete") {
             Toggle("Enabled", isOn: globallyEnabledBinding)
 
-            Toggle("Caret Indicator", isOn: showCaretIndicatorBinding)
+            Picker("Indicator", selection: selectedIndicatorModeBinding) {
+                ForEach(ActivationIndicatorMode.allCases) { mode in
+                    Text(mode.displayLabel)
+                        .tag(mode)
+                }
+            }
+
+            LabeledContent("Ghost Text Color") {
+                HStack(spacing: 8) {
+                    ColorPicker(
+                        "Ghost Text Color",
+                        selection: customSuggestionTextColorBinding,
+                        supportsOpacity: false
+                    )
+                    .labelsHidden()
+
+                    Button("Use Automatic") {
+                        suggestionSettings.setCustomSuggestionTextColorHex(nil)
+                    }
+                    .disabled(suggestionSettings.customSuggestionTextColorHex == nil)
+                }
+            }
+
+            Text(ghostTextColorDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Picker("Engine", selection: selectedEngineBinding) {
                 ForEach(SuggestionEngineKind.allCases) { engine in
@@ -136,15 +164,15 @@ struct SettingsView: View {
                 }
             }
 
-            Picker("Local Prompt", selection: selectedLocalPromptModeBinding) {
-                ForEach(SuggestionPromptMode.allCases) { mode in
-                    Text(mode.displayLabel)
-                        .tag(mode)
+            if suggestionSettings.selectedEngine.supportsPromptModeSelection {
+                Picker("Completion Style", selection: selectedLocalPromptModeBinding) {
+                    ForEach(suggestionSettings.availablePromptModes) { mode in
+                        Text(mode.displayLabel)
+                            .tag(mode)
+                    }
                 }
-            }
-
-            if suggestionSettings.selectedEngine != .llamaOpenSource {
-                Text("Local Prompt is saved for the Open Source engine and does not affect Apple Intelligence.")
+            } else {
+                Text("Completion Style and custom instructions apply to the Open Source engine.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -152,10 +180,10 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var guidedModeSection: some View {
-        Section("Guided Mode") {
+    private var customInstructionsSection: some View {
+        Section("Custom AI Instructions") {
             VStack(alignment: .leading, spacing: 8) {
-                Text(guidedModeDescription)
+                Text(customAIInstructionsDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -191,14 +219,12 @@ struct SettingsView: View {
     @ViewBuilder
     private var localModelsSection: some View {
         Section("Local Models") {
-            if suggestionSettings.selectedEngine != .llamaOpenSource {
-                Text("These models are used when Engine is set to Llama Open Source.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text(localModelsDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             if runtimeModel.availableModels.isEmpty {
-                Text("No local GGUF models found. Install one below or add your own model file.")
+                Text("No local GGUF models found. Download one below or add your own model file.")
                     .foregroundStyle(.secondary)
             } else {
                 Picker("Selected Model", selection: selectedModelBinding) {
@@ -267,8 +293,8 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.displayName)
 
-                if model.displayName != model.filename {
-                    Text(model.filename)
+                if model.displayName != model.actualModelName {
+                    Text(model.actualModelName)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -332,10 +358,34 @@ struct SettingsView: View {
         )
     }
 
-    private var showCaretIndicatorBinding: Binding<Bool> {
+    private var selectedIndicatorModeBinding: Binding<ActivationIndicatorMode> {
         Binding(
-            get: { suggestionSettings.showCaretIndicator },
-            set: { suggestionSettings.setShowCaretIndicator($0) }
+            get: { suggestionSettings.selectedIndicatorMode },
+            set: { mode in
+                suggestionSettings.selectIndicatorMode(mode)
+            }
+        )
+    }
+
+    /// The color picker always needs a concrete color. When the user has not picked one yet we feed
+    /// it the current automatic fallback so the control still previews something sensible. The first
+    /// user interaction promotes that preview into a persisted custom color.
+    private var customSuggestionTextColorBinding: Binding<Color> {
+        Binding(
+            get: {
+                SuggestionTextColorCodec.color(
+                    fromHex: suggestionSettings.customSuggestionTextColorHex)
+                    ?? automaticGhostTextColor
+            },
+            set: { color in
+                guard let nsColor = NSColor(color).usingColorSpace(.sRGB),
+                    let hex = SuggestionTextColorCodec.hexString(from: nsColor)
+                else {
+                    return
+                }
+
+                suggestionSettings.setCustomSuggestionTextColorHex(hex)
+            }
         )
     }
 
@@ -390,18 +440,43 @@ struct SettingsView: View {
         )
     }
 
-    private var guidedModeDescription: String {
+    private var automaticGhostTextColor: Color {
+        colorScheme == .dark
+            ? Color(red: 0.65, green: 0.65, blue: 0.65)
+            : Color(red: 0.45, green: 0.45, blue: 0.45)
+    }
+
+    private var ghostTextColorDescription: String {
+        if suggestionSettings.customSuggestionTextColorHex == nil {
+            return "Automatic adapts to light and dark editors with Tabby's default subtle gray."
+        }
+
+        return "Custom ghost text color is active."
+    }
+
+    private var customAIInstructionsDescription: String {
         if suggestionSettings.selectedEngine == .llamaOpenSource,
-           suggestionSettings.selectedLocalPromptMode == .guided
+            suggestionSettings.effectivePromptMode == .guided
         {
-            return "These instructions are active right now for Guided mode on the Open Source engine."
+            return
+                "These instructions are active right now. Use them to tell Tabby about your tone, language, audience, or formatting preferences."
         }
 
         if suggestionSettings.selectedEngine == .llamaOpenSource {
-            return "These instructions are saved for Guided mode. Prefix Only ignores this field."
+            return
+                "These instructions are saved for the Open Source engine. They take effect when Completion Style is set to Use My Instructions."
         }
 
-        return "These instructions are saved for Guided mode on the Open Source engine."
+        return
+            "These instructions are saved for the Open Source engine. Apple Intelligence ignores this field."
+    }
+
+    private var localModelsDescription: String {
+        if suggestionSettings.selectedEngine == .llamaOpenSource {
+            return "Download a model or add your own below. Models are stored locally on your Mac."
+        }
+
+        return "These models are used when Engine is set to Open Source."
     }
 
     private var launchAtLoginMessage: String? {
@@ -426,15 +501,16 @@ struct SettingsView: View {
 
     /// The app bundle is the canonical source for human-facing version text.
     private var appVersionText: String {
-        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let shortVersion =
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         let buildNumber = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
 
         switch (shortVersion, buildNumber) {
-        case let (shortVersion?, buildNumber?) where shortVersion != buildNumber:
+        case (let shortVersion?, let buildNumber?) where shortVersion != buildNumber:
             return "\(shortVersion) (\(buildNumber))"
-        case let (shortVersion?, _):
+        case (let shortVersion?, _):
             return shortVersion
-        case let (_, buildNumber?):
+        case (_, let buildNumber?):
             return buildNumber
         default:
             return "Unknown"

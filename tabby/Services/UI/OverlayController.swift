@@ -19,6 +19,8 @@ final class OverlayController: SuggestionOverlayControlling {
 
     var onStateChange: ((OverlayState) -> Void)?
 
+    private let suggestionSettings: SuggestionSettingsModel
+
     private(set) var state: OverlayState = .hidden(reason: "Overlay idle.") {
         didSet {
             onStateChange?(state)
@@ -29,6 +31,10 @@ final class OverlayController: SuggestionOverlayControlling {
     /// tab-per-word cycle. Only the rootView is swapped, which triggers a lightweight diff
     /// instead of a full view rebuild + layout pass.
     private var hostingView: NSHostingView<GhostSuggestionView>?
+
+    init(suggestionSettings: SuggestionSettingsModel) {
+        self.suggestionSettings = suggestionSettings
+    }
 
     private lazy var panel: OverlayPanel = {
         let panel = OverlayPanel(
@@ -61,12 +67,25 @@ final class OverlayController: SuggestionOverlayControlling {
         }
 
         let fontSize = resolvedGhostFontSize(for: caretRect, caretQuality: caretQuality)
+        let customGhostColor = SuggestionTextColorCodec.color(
+            fromHex: suggestionSettings.customSuggestionTextColorHex
+        )
         let contentView: NSHostingView<GhostSuggestionView>
         if let existing = hostingView {
-            existing.rootView = GhostSuggestionView(text: text, fontSize: fontSize)
+            existing.rootView = GhostSuggestionView(
+                text: text,
+                fontSize: fontSize,
+                customColor: customGhostColor
+            )
             contentView = existing
         } else {
-            let fresh = NSHostingView(rootView: GhostSuggestionView(text: text, fontSize: fontSize))
+            let fresh = NSHostingView(
+                rootView: GhostSuggestionView(
+                    text: text,
+                    fontSize: fontSize,
+                    customColor: customGhostColor
+                )
+            )
             hostingView = fresh
             panel.contentView = fresh
             contentView = fresh
@@ -127,11 +146,15 @@ private struct GhostSuggestionView: View {
     @Environment(\.colorScheme) var colorScheme
     let text: String
     let fontSize: CGFloat
+    let customColor: Color?
 
     var ghostColor: Color {
-        colorScheme == .dark
-            ? Color(red: 0.65, green: 0.65, blue: 0.65)
-            : Color(red: 0.45, green: 0.45, blue: 0.45)
+        customColor
+            ?? (
+                colorScheme == .dark
+                    ? Color(red: 0.65, green: 0.65, blue: 0.65)
+                    : Color(red: 0.45, green: 0.45, blue: 0.45)
+            )
     }
 
     var body: some View {

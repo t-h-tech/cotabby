@@ -20,12 +20,7 @@ enum SuggestionWordCountPreset: String, CaseIterable, Equatable, Hashable, Senda
     var id: String { rawValue }
 
     var displayLabel: String {
-        switch self {
-        case .threeToSeven:
-            return "\(rawValue) words (recommended)"
-        case .oneToThree, .sevenToTwelve, .twelveToTwenty:
-            return "\(rawValue) words"
-        }
+        "\(rawValue) words"
     }
 
     /// Compact labels are useful in tight menu-bar controls where the full descriptive copy
@@ -64,8 +59,7 @@ enum SuggestionWordCountPreset: String, CaseIterable, Equatable, Hashable, Senda
 }
 
 /// Prompt construction strategy for inline completion.
-/// `guided` and `prefixOnly` now share the same non-visual data path; the only intended difference
-/// is prompt wording strategy.
+/// Both modes share the same generation pipeline; only the prompt wording changes.
 enum SuggestionPromptMode: String, CaseIterable, Equatable, Hashable, Sendable, Identifiable {
     case guided
     case prefixOnly
@@ -75,18 +69,51 @@ enum SuggestionPromptMode: String, CaseIterable, Equatable, Hashable, Sendable, 
     var displayLabel: String {
         switch self {
         case .guided:
-            return "Guided"
+            return "Use My Instructions"
         case .prefixOnly:
-            return "Prefix Only (recommended)"
+            return "Fast"
         }
     }
 
     var compactLabel: String {
         switch self {
         case .guided:
-            return "Guided"
+            return "Instructions"
         case .prefixOnly:
-            return "Prefix Only"
+            return "Fast"
+        }
+    }
+}
+
+/// User-facing indicator display mode for supported text fields.
+/// This replaces the old caret-indicator boolean so Tabby can express multiple affordances
+/// without smuggling extra meaning through one toggle.
+enum ActivationIndicatorMode: String, CaseIterable, Equatable, Hashable, Sendable, Identifiable {
+    case hidden
+    case caretAnchor
+    case fieldEdgeIcon
+
+    var id: String { rawValue }
+
+    var displayLabel: String {
+        switch self {
+        case .hidden:
+            return "None"
+        case .caretAnchor:
+            return "Caret"
+        case .fieldEdgeIcon:
+            return "Tabby Icon"
+        }
+    }
+
+    var compactLabel: String {
+        switch self {
+        case .hidden:
+            return "None"
+        case .caretAnchor:
+            return "Caret"
+        case .fieldEdgeIcon:
+            return "Tabby"
         }
     }
 }
@@ -105,7 +132,7 @@ struct SuggestionConfiguration: Equatable, Sendable {
     let maxPrefixWords: Int
     let maxPrefixCharacters: Int
     let maxSuffixCharacters: Int
-    /// Shipped first-launch default for the user's Guided-mode custom instructions.
+    /// Shipped first-launch default for the user's saved custom instructions.
     /// `SuggestionSettingsModel` persists the user's real preference; configuration only provides
     /// the app's starting value for a fresh install.
     let defaultCustomAIInstructions: String?
@@ -131,12 +158,12 @@ struct SuggestionConfiguration: Equatable, Sendable {
         // little quality gain because Tabby is only completing the immediate local continuation.
         maxPrefixCharacters: 1000,
         maxSuffixCharacters: 192,
-        // Seed Guided mode with the current house writing guidance on first launch.
+        // Seed the instructions-based mode with the current house writing guidance on first launch.
         defaultCustomAIInstructions: """
             My name is Jacob Fu. I usually write in English.
             Write in a friendly, professional and empathetic voice.
             """,
-        defaultWordCountPreset: .threeToSeven,
+        defaultWordCountPreset: .sevenToTwelve,
         defaultPromptMode: .prefixOnly
     )
 }

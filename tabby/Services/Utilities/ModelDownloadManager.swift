@@ -13,14 +13,14 @@ enum ModelDownloadState: Equatable {
         switch self {
         case .idle:
             return "Not installed"
-        case let .downloading(progress):
+        case .downloading(let progress):
             if let progress {
                 return "Downloading \(Int((progress * 100).rounded()))%"
             }
             return "Downloading"
         case .downloaded:
             return "Installed"
-        case let .failed(message):
+        case .failed(let message):
             return message
         }
     }
@@ -28,7 +28,7 @@ enum ModelDownloadState: Equatable {
     /// Determinate progress is only available when the server reports content length.
     /// We surface it separately so views can choose between a linear bar and an indeterminate one.
     var progressFraction: Double? {
-        guard case let .downloading(progress) = self else {
+        guard case .downloading(let progress) = self else {
             return nil
         }
 
@@ -61,7 +61,8 @@ final class ModelDownloadManager: ObservableObject {
     private var downloadTasks: [String: Task<Void, Never>] = [:]
 
     init(runtimeDirectoryURL: URL? = nil) {
-        let primaryDirectoryURL = runtimeDirectoryURL ?? BundledRuntimeLocator.userRuntimeDirectoryURL()
+        let primaryDirectoryURL =
+            runtimeDirectoryURL ?? BundledRuntimeLocator.userRuntimeDirectoryURL()
         self.runtimeDirectoryURL = primaryDirectoryURL
 
         var directories = [primaryDirectoryURL]
@@ -91,7 +92,7 @@ final class ModelDownloadManager: ObservableObject {
     func refreshModelStates() {
         for model in models {
             if downloadTasks[model.filename] != nil {
-                if case let .downloading(progress) = modelStates[model.filename] {
+                if case .downloading(let progress) = modelStates[model.filename] {
                     modelStates[model.filename] = .downloading(progress: progress)
                 } else {
                     modelStates[model.filename] = .downloading(progress: nil)
@@ -137,7 +138,7 @@ final class ModelDownloadManager: ObservableObject {
 
     /// Returns `true` only when the concrete GGUF file lives in Tabby's user-writable model
     /// directory. This is the boundary we use for destructive actions so settings never offers
-    /// "delete" for bundled or development fallback assets the app does not own.
+    /// "delete" for assets outside the app-managed local model directory.
     func canDeleteModel(filename: String) -> Bool {
         FileManager.default.fileExists(atPath: modelFileURL(filename: filename).path)
     }
@@ -206,8 +207,9 @@ final class ModelDownloadManager: ObservableObject {
             return
         }
 
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            throw LlamaRuntimeError.unavailable("Model download failed with status code \(httpResponse.statusCode).")
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw LlamaRuntimeError.unavailable(
+                "Model download failed with status code \(httpResponse.statusCode).")
         }
     }
 
@@ -291,7 +293,8 @@ private final class ModelDownloadSessionDelegate: NSObject, URLSessionDownloadDe
         response = downloadTask.response
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?)
+    {
         guard !hasCompleted else {
             return
         }
@@ -312,6 +315,7 @@ private final class ModelDownloadSessionDelegate: NSObject, URLSessionDownloadDe
             return
         }
 
-        continuation?.resume(returning: DownloadResult(temporaryURL: downloadedFileURL, response: response))
+        continuation?.resume(
+            returning: DownloadResult(temporaryURL: downloadedFileURL, response: response))
     }
 }

@@ -34,7 +34,7 @@ enum CustomAIInstructionFormatter {
             .filter { !$0.isEmpty }
             .map { "- \($0)" }
 
-        return ["Guided mode style preferences:"] +
+        return ["Custom AI writing preferences:"] +
             instructionLines +
             [
                 "Apply this guidance only when it fits the surrounding text.",

@@ -18,8 +18,8 @@ enum LlamaPromptRenderer {
     ) -> String {
         switch promptMode {
         case .prefixOnly:
-            // Prefix-only is intentionally the old low-overhead path: send only the user's local
-            // prefix text. This mode is useful precisely because it avoids extra prompt framing.
+            // Fast mode is intentionally the low-overhead path: send only the user's local prefix
+            // text. This keeps latency down and minimizes extra steering for short completions.
             return prefixText
         case .guided:
             return guidedPrompt(
@@ -31,8 +31,8 @@ enum LlamaPromptRenderer {
         }
     }
 
-    /// Guided mode keeps a more explicit contract for local models that benefit from stronger task
-    /// framing, especially when testing how much custom style guidance the model actually follows.
+    /// The instructions-based mode keeps a more explicit contract for local models that benefit
+    /// from stronger task framing, especially when testing how much user guidance the model follows.
     private static func guidedPrompt(
         prefixText: String,
         applicationName: String,

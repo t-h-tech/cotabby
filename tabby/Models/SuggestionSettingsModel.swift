@@ -2,16 +2,18 @@ import Combine
 import Foundation
 
 /// File overview:
-/// Owns the user-editable autocomplete preferences that are shared across the app:
-/// engine selection, completion length, and the local-model prompt mode preference.
+/// Owns the durable autocomplete preferences that are shared across the app:
+/// engine selection, completion length, indicator appearance, prompt strategy, and custom
+/// writing guidance.
 ///
-/// This type is the right owner for those values because they are product settings, not
+/// This type is the right owner for these values because they are product settings, not
 /// `SuggestionCoordinator` session state. The coordinator should react to settings changes, not
 /// persist them itself.
 @MainActor
 final class SuggestionSettingsModel: ObservableObject {
     @Published private(set) var isGloballyEnabled: Bool
-    @Published private(set) var showCaretIndicator: Bool
+    @Published private(set) var selectedIndicatorMode: ActivationIndicatorMode
+    @Published private(set) var customSuggestionTextColorHex: String?
     @Published private(set) var selectedEngine: SuggestionEngineKind
     @Published private(set) var selectedWordCountPreset: SuggestionWordCountPreset
     @Published private(set) var selectedLocalPromptMode: SuggestionPromptMode
@@ -20,7 +22,10 @@ final class SuggestionSettingsModel: ObservableObject {
     private let userDefaults: UserDefaults
 
     private static let isGloballyEnabledDefaultsKey = "tabbyGloballyEnabled"
+    // Legacy key. Keep reading and writing through it so old builds degrade to a visible indicator.
     private static let showCaretIndicatorDefaultsKey = "tabbyShowCaretIndicator"
+    private static let selectedIndicatorModeDefaultsKey = "tabbySelectedIndicatorMode"
+    private static let customSuggestionTextColorHexDefaultsKey = "tabbyCustomSuggestionTextColorHex"
     private static let selectedEngineDefaultsKey = "selectedSuggestionEngine"
     private static let selectedWordCountPresetDefaultsKey = "selectedSuggestionWordCountPreset"
     private static let selectedLocalPromptModeDefaultsKey = "selectedLocalSuggestionPromptMode"
@@ -32,22 +37,24 @@ final class SuggestionSettingsModel: ObservableObject {
     ) {
         self.userDefaults = userDefaults
 
-        // Default to enabled and showing the caret indicator on first launch.
         let resolvedGloballyEnabled = userDefaults.object(forKey: Self.isGloballyEnabledDefaultsKey) as? Bool ?? true
-        let resolvedShowCaretIndicator = userDefaults.object(forKey: Self.showCaretIndicatorDefaultsKey) as? Bool ?? true
-
-        let resolvedEngine =
-            userDefaults
+        let legacyShowCaretIndicator = userDefaults.object(forKey: Self.showCaretIndicatorDefaultsKey) as? Bool ?? true
+        let resolvedIndicatorMode = userDefaults
+            .string(forKey: Self.selectedIndicatorModeDefaultsKey)
+            .flatMap(ActivationIndicatorMode.init(rawValue:))
+            ?? Self.migrateIndicatorMode(fromLegacyShowCaretIndicator: legacyShowCaretIndicator)
+        let resolvedCustomSuggestionTextColorHex = Self.normalizedHexString(
+            userDefaults.string(forKey: Self.customSuggestionTextColorHexDefaultsKey)
+        )
+        let resolvedEngine = userDefaults
             .string(forKey: Self.selectedEngineDefaultsKey)
             .flatMap(SuggestionEngineKind.init(rawValue:))
             ?? .llamaOpenSource
-        let resolvedWordCountPreset =
-            userDefaults
+        let resolvedWordCountPreset = userDefaults
             .string(forKey: Self.selectedWordCountPresetDefaultsKey)
             .flatMap(SuggestionWordCountPreset.init(rawValue:))
             ?? configuration.defaultWordCountPreset
-        let resolvedLocalPromptMode =
-            userDefaults
+        let resolvedLocalPromptMode = userDefaults
             .string(forKey: Self.selectedLocalPromptModeDefaultsKey)
             .flatMap(SuggestionPromptMode.init(rawValue:))
             ?? configuration.defaultPromptMode
@@ -58,18 +65,26 @@ final class SuggestionSettingsModel: ObservableObject {
         }
 
         isGloballyEnabled = resolvedGloballyEnabled
-        showCaretIndicator = resolvedShowCaretIndicator
+        selectedIndicatorMode = resolvedIndicatorMode
+        customSuggestionTextColorHex = resolvedCustomSuggestionTextColorHex
         selectedEngine = resolvedEngine
         selectedWordCountPreset = resolvedWordCountPreset
         selectedLocalPromptMode = resolvedLocalPromptMode
         customAIInstructions = resolvedCustomAIInstructions
 
         userDefaults.set(resolvedGloballyEnabled, forKey: Self.isGloballyEnabledDefaultsKey)
-        userDefaults.set(resolvedShowCaretIndicator, forKey: Self.showCaretIndicatorDefaultsKey)
+        persistSelectedIndicatorMode(resolvedIndicatorMode)
+        persistCustomSuggestionTextColorHex(resolvedCustomSuggestionTextColorHex)
         persistSelectedEngine(resolvedEngine)
         persistSelectedWordCountPreset(resolvedWordCountPreset)
         persistSelectedLocalPromptMode(resolvedLocalPromptMode)
         persistCustomAIInstructions(resolvedCustomAIInstructions)
+    }
+
+    /// Compatibility shim for legacy call sites while the UI migrates from the old toggle to the
+    /// richer indicator-mode picker.
+    var showCaretIndicator: Bool {
+        selectedIndicatorMode != .hidden
     }
 
     var availablePromptModes: [SuggestionPromptMode] {
@@ -121,15 +136,37 @@ final class SuggestionSettingsModel: ObservableObject {
     }
 
     func setGloballyEnabled(_ enabled: Bool) {
-        guard isGloballyEnabled != enabled else { return }
+        guard isGloballyEnabled != enabled else {
+            return
+        }
+
         isGloballyEnabled = enabled
         userDefaults.set(enabled, forKey: Self.isGloballyEnabledDefaultsKey)
     }
 
+    func selectIndicatorMode(_ mode: ActivationIndicatorMode) {
+        guard selectedIndicatorMode != mode else {
+            return
+        }
+
+        selectedIndicatorMode = mode
+        persistSelectedIndicatorMode(mode)
+    }
+
+    /// Compatibility shim for old toggle-driven call sites. Turning the toggle back on restores the
+    /// caret-anchor indicator because that was the historic behavior users opted into.
     func setShowCaretIndicator(_ show: Bool) {
-        guard showCaretIndicator != show else { return }
-        showCaretIndicator = show
-        userDefaults.set(show, forKey: Self.showCaretIndicatorDefaultsKey)
+        selectIndicatorMode(show ? .caretAnchor : .hidden)
+    }
+
+    func setCustomSuggestionTextColorHex(_ hex: String?) {
+        let normalizedHex = Self.normalizedHexString(hex)
+        guard customSuggestionTextColorHex != normalizedHex else {
+            return
+        }
+
+        customSuggestionTextColorHex = normalizedHex
+        persistCustomSuggestionTextColorHex(normalizedHex)
     }
 
     func setCustomAIInstructions(_ instructions: String) {
@@ -162,6 +199,44 @@ final class SuggestionSettingsModel: ObservableObject {
 
     private func persistSelectedLocalPromptMode(_ mode: SuggestionPromptMode) {
         userDefaults.set(mode.rawValue, forKey: Self.selectedLocalPromptModeDefaultsKey)
+    }
+
+    private func persistSelectedIndicatorMode(_ mode: ActivationIndicatorMode) {
+        userDefaults.set(mode.rawValue, forKey: Self.selectedIndicatorModeDefaultsKey)
+        userDefaults.set(mode != .hidden, forKey: Self.showCaretIndicatorDefaultsKey)
+    }
+
+    private func persistCustomSuggestionTextColorHex(_ hex: String?) {
+        if let hex {
+            userDefaults.set(hex, forKey: Self.customSuggestionTextColorHexDefaultsKey)
+        } else {
+            userDefaults.removeObject(forKey: Self.customSuggestionTextColorHexDefaultsKey)
+        }
+    }
+
+    private static func migrateIndicatorMode(
+        fromLegacyShowCaretIndicator showCaretIndicator: Bool
+    ) -> ActivationIndicatorMode {
+        showCaretIndicator ? .caretAnchor : .hidden
+    }
+
+    private static func normalizedHexString(_ hex: String?) -> String? {
+        guard let hex else {
+            return nil
+        }
+
+        let trimmed = hex
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "#", with: "")
+            .uppercased()
+        let validCharacters = CharacterSet(charactersIn: "0123456789ABCDEF")
+        guard trimmed.count == 6,
+              trimmed.unicodeScalars.allSatisfy(validCharacters.contains(_:))
+        else {
+            return nil
+        }
+
+        return trimmed
     }
 
     private func persistCustomAIInstructions(_ instructions: String) {

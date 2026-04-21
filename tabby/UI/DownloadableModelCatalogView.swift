@@ -66,7 +66,11 @@ private struct DownloadableModelRow: View {
                     Text(model.displayName)
                         .font(.system(size: 13, weight: .medium))
 
-                    Text(statusText)
+                    Text("(\(model.actualModelName))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    Text(metadataText)
                         .font(.system(size: 11))
                         .foregroundStyle(statusColor)
                 }
@@ -95,7 +99,7 @@ private struct DownloadableModelRow: View {
             Button("Get") { onDownload() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-        case let .downloading(progress):
+        case .downloading(let progress):
             if let progress {
                 Text("\(Int((progress * 100).rounded()))%")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -117,13 +121,20 @@ private struct DownloadableModelRow: View {
         }
     }
 
-    private var statusText: String {
+    private var metadataText: String {
+        let installationStatus: String
         switch state {
-        case .idle: return "Not installed"
-        case .downloading: return state.statusText
-        case .downloaded: return "Installed"
-        case .failed: return "Failed"
+        case .idle:
+            installationStatus = "Not installed"
+        case .downloading:
+            installationStatus = state.statusText
+        case .downloaded:
+            installationStatus = "Installed"
+        case .failed:
+            installationStatus = state.statusText
         }
+
+        return "\(installationStatus)  •  \(model.approximateSizeLabel)"
     }
 
     private var statusColor: Color {

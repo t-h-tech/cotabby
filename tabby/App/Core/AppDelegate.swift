@@ -106,18 +106,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runtimeModel.stop()
     }
 
-    /// Mirrors supported-focus state into the caret-anchored activation indicator,
-    /// gated by the user's showCaretIndicator preference.
+    /// Mirrors supported-focus state into the selected activation indicator mode.
+    /// Different modes intentionally use different geometry contracts: caret-anchor mode hugs the
+    /// insertion point, while the icon mode sits outside the field edge.
     private func updateActivationIndicator(for snapshot: FocusSnapshot) {
-        guard suggestionSettings.showCaretIndicator,
-              case .supported = snapshot.capability,
-              let caretRect = snapshot.context?.caretRect
+        guard case .supported = snapshot.capability,
+              let context = snapshot.context
         else {
             activationIndicatorController.hide(reason: "Activation indicator hidden.")
             return
         }
 
-        activationIndicatorController.show(at: caretRect)
+        activationIndicatorController.show(
+            mode: suggestionSettings.selectedIndicatorMode,
+            caretRect: context.caretRect,
+            inputFrameRect: context.inputFrameRect
+        )
     }
 
     /// Warm the local runtime only when the user is actually on the open-source engine path.

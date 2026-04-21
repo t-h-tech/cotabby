@@ -18,7 +18,7 @@ enum SuggestionEngineKind: String, CaseIterable, Equatable, Hashable, Sendable, 
         case .appleIntelligence:
             return "Apple Intelligence"
         case .llamaOpenSource:
-            return "Llama Open Source"
+            return "Open Source"
         }
     }
 
@@ -63,7 +63,7 @@ struct SuggestionSettingsSnapshot: Equatable, Sendable {
     let selectedEngine: SuggestionEngineKind
     let selectedWordCountPreset: SuggestionWordCountPreset
     let effectivePromptMode: SuggestionPromptMode
-    /// Normalized user-authored guidance for Guided prompt mode.
+    /// Normalized user-authored guidance for the instructions-based completion style.
     /// This travels in the snapshot so generation uses the same value the Settings UI shows.
     let customAIInstructions: String?
 }

@@ -52,16 +52,17 @@ final class LlamaRuntimeManager: ObservableObject {
         selectedModelFilename = normalizedModelFilename(filename)
     }
 
-    /// Ensures the selected bundled model is resolved and prepared before any generation requests run.
+    /// Ensures the selected local model is resolved and prepared before any generation requests run.
     func prepare() async throws {
         _ = try await preparedRuntime()
     }
 
-    /// Reloads the runtime in place with a newly selected bundled model.
+    /// Reloads the runtime in place with a newly selected local model.
     /// The manager instance stays alive; only the loaded model changes.
     func selectModel(filename: String) async throws {
         guard let normalizedFilename = normalizedModelFilename(filename) else {
-            let error = LlamaRuntimeError.unavailable("The bundled model \(filename) is unavailable.")
+            let error = LlamaRuntimeError.unavailable(
+                "The selected model \(filename) is unavailable.")
             diagnostics.lastError = error.localizedDescription
             throw error
         }
@@ -135,7 +136,7 @@ final class LlamaRuntimeManager: ObservableObject {
         let requestedModelFilename = resolvedRuntime.modelFileURL.lastPathComponent
 
         if let cachedRuntime,
-           cachedRuntime.resolvedRuntime.modelFileURL == resolvedRuntime.modelFileURL
+            cachedRuntime.resolvedRuntime.modelFileURL == resolvedRuntime.modelFileURL
         {
             return cachedRuntime
         }
@@ -187,7 +188,7 @@ final class LlamaRuntimeManager: ObservableObject {
         }
     }
 
-    /// Validates the chosen filename against discovered bundled models and falls back to the first
+    /// Validates the chosen filename against discovered local models and falls back to the first
     /// available option when the caller passes `nil` or a missing filename.
     private func normalizedModelFilename(_ filename: String?) -> String? {
         guard !availableModels.isEmpty else {
