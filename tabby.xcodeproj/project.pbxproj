@@ -9,15 +9,34 @@
 /* Begin PBXBuildFile section */
 		A1C3E0012F90000100AAA001 /* LlamaSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A1C3E0002F90000100AAA001 /* LlamaSwift */; };
 		A1C3E0112F90000100AAA001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A1C3E0102F90000100AAA001 /* Sparkle */; };
+		A404828463CADB2ECDAE7AF3 /* LlamaPromptRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F29623C5C0A67B992D383A3C /* LlamaPromptRendererTests.swift */; };
+		ADEFEE12C197DB6C990E3812 /* SuggestionRequestFactoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B1121FFDAD30C7F62E15289 /* SuggestionRequestFactoryTests.swift */; };
+		B053492719F6106E48290C32 /* SuggestionAvailabilityEvaluatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A39EC1A44E9160E13E2AE77 /* SuggestionAvailabilityEvaluatorTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		E973E5B467F19C10FF50C9C0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 193741412F81DE7000BEC04F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 193741482F81DE7000BEC04F;
+			remoteInfo = tabby;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		193741492F81DE7000BEC04F /* tabby.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = tabby.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3FBFA92FA44AA317135426FB /* tabbyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = tabbyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A39EC1A44E9160E13E2AE77 /* SuggestionAvailabilityEvaluatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SuggestionAvailabilityEvaluatorTests.swift; sourceTree = "<group>"; };
+		8B1121FFDAD30C7F62E15289 /* SuggestionRequestFactoryTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SuggestionRequestFactoryTests.swift; sourceTree = "<group>"; };
+		F29623C5C0A67B992D383A3C /* LlamaPromptRendererTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LlamaPromptRendererTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		1937414B2F81DE7000BEC04F /* tabby */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = tabby;
 			sourceTree = "<group>";
 		};
@@ -33,6 +52,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9C0C286AC971FE1F5AB12DB8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -41,6 +67,8 @@
 			children = (
 				1937414B2F81DE7000BEC04F /* tabby */,
 				1937414A2F81DE7000BEC04F /* Products */,
+				98425D3A1DB21E10B0F3BFA6 /* Frameworks */,
+				38079AF58386B5C2E9373742 /* tabbyTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -48,8 +76,27 @@
 			isa = PBXGroup;
 			children = (
 				193741492F81DE7000BEC04F /* tabby.app */,
+				3FBFA92FA44AA317135426FB /* tabbyTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		38079AF58386B5C2E9373742 /* tabbyTests */ = {
+			isa = PBXGroup;
+			children = (
+				F29623C5C0A67B992D383A3C /* LlamaPromptRendererTests.swift */,
+				5A39EC1A44E9160E13E2AE77 /* SuggestionAvailabilityEvaluatorTests.swift */,
+				8B1121FFDAD30C7F62E15289 /* SuggestionRequestFactoryTests.swift */,
+			);
+			name = tabbyTests;
+			path = tabbyTests;
+			sourceTree = "<group>";
+		};
+		98425D3A1DB21E10B0F3BFA6 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -79,6 +126,24 @@
 			productReference = 193741492F81DE7000BEC04F /* tabby.app */;
 			productType = "com.apple.product-type.application";
 		};
+		FA14279AECE62FBF1162F537 /* tabbyTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C2F70348176E20D09A554097 /* Build configuration list for PBXNativeTarget "tabbyTests" */;
+			buildPhases = (
+				A3C5DA8F3C631E089F2C6671 /* Sources */,
+				9C0C286AC971FE1F5AB12DB8 /* Frameworks */,
+				2E6FFFE4DB09561F83FE186D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1611518BB70BEEF01D2401F8 /* PBXTargetDependency */,
+			);
+			name = tabbyTests;
+			productName = tabbyTests;
+			productReference = 3FBFA92FA44AA317135426FB /* tabbyTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -104,7 +169,7 @@
 			mainGroup = 193741402F81DE7000BEC04F;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A1C3E0022F90000100AAA001 /* XCRemoteSwiftPackageReference "llama" */,
+				A1C3E0022F90000100AAA001 /* XCRemoteSwiftPackageReference "llama.swift" */,
 				A1C3E0122F90000100AAA001 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -113,12 +178,20 @@
 			projectRoot = "";
 			targets = (
 				193741482F81DE7000BEC04F /* tabby */,
+				FA14279AECE62FBF1162F537 /* tabbyTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		193741472F81DE7000BEC04F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2E6FFFE4DB09561F83FE186D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -135,7 +208,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A3C5DA8F3C631E089F2C6671 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A404828463CADB2ECDAE7AF3 /* LlamaPromptRendererTests.swift in Sources */,
+				B053492719F6106E48290C32 /* SuggestionAvailabilityEvaluatorTests.swift in Sources */,
+				ADEFEE12C197DB6C990E3812 /* SuggestionRequestFactoryTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1611518BB70BEEF01D2401F8 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = tabby;
+			target = 193741482F81DE7000BEC04F /* tabby */;
+			targetProxy = E973E5B467F19C10FF50C9C0 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		193741522F81DE7200BEC04F /* Debug */ = {
@@ -324,6 +416,54 @@
 			};
 			name = Release;
 		};
+		6C6404C4557E1BE4CFCFFFEE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jacobfu.tabby.tabbyTests;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/tabby.app/Contents/MacOS/tabby";
+			};
+			name = Debug;
+		};
+		DBAA9C9A1F8C6DEB2FA61301 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jacobfu.tabby.tabbyTests;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/tabby.app/Contents/MacOS/tabby";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -345,10 +485,19 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		C2F70348176E20D09A554097 /* Build configuration list for PBXNativeTarget "tabbyTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DBAA9C9A1F8C6DEB2FA61301 /* Release */,
+				6C6404C4557E1BE4CFCFFFEE /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		A1C3E0022F90000100AAA001 /* XCRemoteSwiftPackageReference "llama" */ = {
+		A1C3E0022F90000100AAA001 /* XCRemoteSwiftPackageReference "llama.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/mattt/llama.swift";
 			requirement = {
@@ -369,7 +518,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		A1C3E0002F90000100AAA001 /* LlamaSwift */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A1C3E0022F90000100AAA001 /* XCRemoteSwiftPackageReference "llama" */;
+			package = A1C3E0022F90000100AAA001 /* XCRemoteSwiftPackageReference "llama.swift" */;
 			productName = LlamaSwift;
 		};
 		A1C3E0102F90000100AAA001 /* Sparkle */ = {
