@@ -161,6 +161,13 @@ struct SettingsView: View {
                         .tag(preset)
                 }
             }
+
+            Picker("Language", selection: selectedLanguageBinding) {
+                ForEach(SuggestionLanguage.allCases) { language in
+                    Text(language.displayLabel)
+                        .tag(language)
+                }
+            }
         }
     }
 
@@ -304,6 +311,7 @@ struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                 }
 
+                CustomRulesEditor(suggestionSettings: suggestionSettings)
             }
             .padding(.vertical, 4)
         }
@@ -641,6 +649,15 @@ struct SettingsView: View {
             get: { suggestionSettings.selectedWordCountPreset },
             set: { preset in
                 suggestionSettings.selectWordCountPreset(preset)
+            }
+        )
+    }
+
+    private var selectedLanguageBinding: Binding<SuggestionLanguage> {
+        Binding(
+            get: { suggestionSettings.responseLanguage },
+            set: { language in
+                suggestionSettings.setResponseLanguage(language)
             }
         )
     }

@@ -24,6 +24,7 @@
 		C10000052F91000100BBB005 /* PromptPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000152F91000100BBB015 /* PromptPolicyTests.swift */; };
 		C10000062F91000100BBB006 /* ModelAndPresentationValueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000162F91000100BBB016 /* ModelAndPresentationValueTests.swift */; };
 		C10000072F91000100BBB007 /* SuggestionStateHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000172F91000100BBB017 /* SuggestionStateHelperTests.swift */; };
+		C10000312F91000100BBB031 /* CustomRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000302F91000100BBB030 /* CustomRulesTests.swift */; };
 		D10000012F92000100CCC001 /* TerminalAppDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000112F92000100CCC011 /* TerminalAppDetectorTests.swift */; };
 		E10000012F93000100DDD001 /* PromptContextSanitizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000112F93000100DDD011 /* PromptContextSanitizerTests.swift */; };
 		E10000022F93000100DDD002 /* PermissionAndContextModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000122F93000100DDD012 /* PermissionAndContextModelTests.swift */; };
@@ -60,6 +61,7 @@
 		C10000152F91000100BBB015 /* PromptPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PromptPolicyTests.swift; sourceTree = "<group>"; };
 		C10000162F91000100BBB016 /* ModelAndPresentationValueTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ModelAndPresentationValueTests.swift; sourceTree = "<group>"; };
 		C10000172F91000100BBB017 /* SuggestionStateHelperTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SuggestionStateHelperTests.swift; sourceTree = "<group>"; };
+		C10000302F91000100BBB030 /* CustomRulesTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CustomRulesTests.swift; sourceTree = "<group>"; };
 		D10000112F92000100CCC011 /* TerminalAppDetectorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalAppDetectorTests.swift; sourceTree = "<group>"; };
 		E10000112F93000100DDD011 /* PromptContextSanitizerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PromptContextSanitizerTests.swift; sourceTree = "<group>"; };
 		E10000122F93000100DDD012 /* PermissionAndContextModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PermissionAndContextModelTests.swift; sourceTree = "<group>"; };
@@ -127,6 +129,7 @@
 			children = (
 				C10000112F91000100BBB011 /* CotabbyTestFixtures.swift */,
 				F29623C5C0A67B992D383A3C /* LlamaPromptRendererTests.swift */,
+				C10000302F91000100BBB030 /* CustomRulesTests.swift */,
 				C10000152F91000100BBB015 /* PromptPolicyTests.swift */,
 				5A39EC1A44E9160E13E2AE77 /* SuggestionAvailabilityEvaluatorTests.swift */,
 				8B1121FFDAD30C7F62E15289 /* SuggestionRequestFactoryTests.swift */,
@@ -269,6 +272,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A404828463CADB2ECDAE7AF3 /* LlamaPromptRendererTests.swift in Sources */,
+				C10000312F91000100BBB031 /* CustomRulesTests.swift in Sources */,
 				B053492719F6106E48290C32 /* SuggestionAvailabilityEvaluatorTests.swift in Sources */,
 				ADEFEE12C197DB6C990E3812 /* SuggestionRequestFactoryTests.swift in Sources */,
 				C10000022F91000100BBB002 /* SuggestionTextNormalizerTests.swift in Sources */,
