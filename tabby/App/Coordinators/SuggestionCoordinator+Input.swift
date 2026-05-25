@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 /// File overview:
 /// Focus, permission, and keyboard-event entry points for `SuggestionCoordinator`.
@@ -7,6 +8,7 @@ extension SuggestionCoordinator {
     // MARK: - Environment and Input Handling
 
     func handlePermissionChange() {
+        TabbyLogger.suggestion.debug("Permission state changed, reconciling")
         reconcileWithCurrentEnvironment()
 
         if SuggestionAvailabilityEvaluator.shouldSchedulePrediction(
@@ -21,6 +23,7 @@ extension SuggestionCoordinator {
     }
 
     func handleFocusSnapshotChange(_ snapshot: FocusSnapshot) {
+        TabbyLogger.suggestion.trace("Focus snapshot changed: app=\(snapshot.applicationName ?? "nil") capability=\(snapshot.capability.shortLabel)")
         // Start capturing visual context for a newly focused input even when predictions are
         // temporarily disabled by transient field states (e.g., "text is selected" or "secure
         // field"). Skip capture entirely when the subsystem is hard-disabled (globally off,
