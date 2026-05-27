@@ -148,6 +148,9 @@ struct SettingsView: View {
 
             Toggle("Allow Multi-line Suggestions", isOn: multiLineEnabledBinding)
 
+            Toggle("Accept Punctuation With Word", isOn: autoAcceptTrailingPunctuationBinding)
+                .help("When on, accepting a word also takes punctuation attached to it, like the \"?\" in \"you?\".")
+
             Toggle("Include Clipboard Context", isOn: clipboardContextEnabledBinding)
 
             // Open at Login is hidden until the quarantine/SMAppService issue is resolved.
@@ -280,9 +283,6 @@ struct SettingsView: View {
                     }
                 }
             }
-
-            Toggle("Accept Punctuation With Word", isOn: autoAcceptTrailingPunctuationBinding)
-                .help("When on, accepting a word also takes punctuation attached to it, like the \"?\" in \"you?\".")
 
             LabeledContent("Accept Entire Suggestion") {
                 HStack(spacing: 8) {
