@@ -27,6 +27,11 @@ struct WelcomeView: View {
 
     @State private var step: WelcomeStep = .welcome
     @State private var selectedTemplate: OnboardingTemplate?
+    /// The engine chosen at the top of the template step. Seeded in `init` from Apple Intelligence
+    /// availability (Apple Intelligence when the Mac supports it, otherwise Open Source) so the
+    /// template step's first render already shows the right card instead of flashing the wrong one;
+    /// the tier cards resolve their plan against this.
+    @State private var selectedEngine: SuggestionEngineKind
     @State private var isRecordingOnboardingKeybind = false
     @State private var isRecordingOnboardingFullAcceptKeybind = false
     @State private var isRecordingOnboardingGlobalToggleKeybind = false
@@ -35,6 +40,32 @@ struct WelcomeView: View {
     /// onboarding. `@State` (not a stored `let`) ensures `ProcessInfo` is read a single time rather
     /// than on every struct re-creation that an `@ObservedObject` publish (e.g. a download tick) causes.
     @State private var hardware = HardwareCapabilityProbe.current()
+
+    init(
+        permissionManager: PermissionManager,
+        runtimeModel: RuntimeBootstrapModel,
+        modelDownloadManager: ModelDownloadManager,
+        suggestionSettings: SuggestionSettingsModel,
+        foundationModelAvailabilityService: FoundationModelAvailabilityService,
+        permissionGuidanceController: PermissionGuidanceController,
+        onPreferredWindowSizeChange: @escaping (NSSize) -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
+        _permissionManager = ObservedObject(wrappedValue: permissionManager)
+        _runtimeModel = ObservedObject(wrappedValue: runtimeModel)
+        _modelDownloadManager = ObservedObject(wrappedValue: modelDownloadManager)
+        _suggestionSettings = ObservedObject(wrappedValue: suggestionSettings)
+        _foundationModelAvailabilityService = ObservedObject(wrappedValue: foundationModelAvailabilityService)
+        self.permissionGuidanceController = permissionGuidanceController
+        self.onPreferredWindowSizeChange = onPreferredWindowSizeChange
+        self.onDismiss = onDismiss
+        // Seed the engine before the first render so the template step never shows a frame of "Open
+        // Source" selected on an Apple Intelligence-capable Mac and then snaps to it. Availability is
+        // resolved well before onboarding appears, so reading it here is reliable.
+        _selectedEngine = State(
+            initialValue: foundationModelAvailabilityService.isAvailable ? .appleIntelligence : .llamaOpenSource
+        )
+    }
 
     private var preferredWindowSize: NSSize {
         step.preferredWindowSize
@@ -133,7 +164,9 @@ extension WelcomeView {
                 modelDownloadManager: modelDownloadManager,
                 foundationModelAvailabilityService: foundationModelAvailabilityService,
                 hardware: hardware,
+                selectedEngine: selectedEngine,
                 selectedTemplate: $selectedTemplate,
+                onSelectEngine: selectEngine,
                 onSelect: applyTemplate
             )
         case .aboutYou:
@@ -600,10 +633,21 @@ extension WelcomeView {
     }
 
     fileprivate func resolvedPlan(for template: OnboardingTemplate) -> ResolvedTemplatePlan {
-        OnboardingTemplateRecommender.resolvePlan(
-            for: template,
-            appleIntelligenceAvailable: foundationModelAvailabilityService.isAvailable
-        )
+        OnboardingTemplateRecommender.resolvePlan(for: template, engine: selectedEngine)
+    }
+
+    /// Switches the engine. Re-applies the already-selected tier under the new engine so the
+    /// persisted settings and any download stay consistent; switching to Open Source after a tier
+    /// is chosen starts that tier's download (the tap is the user's consent), while Apple
+    /// Intelligence needs none. No download is started until a tier has been chosen.
+    fileprivate func selectEngine(_ engine: SuggestionEngineKind) {
+        guard selectedEngine != engine else {
+            return
+        }
+        selectedEngine = engine
+        if let template = selectedTemplate {
+            applyTemplate(template)
+        }
     }
 
     /// Applies a template's settings and starts its model download (if any). Selecting a card is the
