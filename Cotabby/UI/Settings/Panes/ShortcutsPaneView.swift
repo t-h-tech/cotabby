@@ -14,6 +14,8 @@ struct ShortcutsPaneView: View {
     var body: some View {
         SettingsPaneScaffold {
             Section("Shortcuts") {
+                AcceptanceModePickerView(suggestionSettings: suggestionSettings)
+
                 LabeledContent("Accept Word") {
                     KeybindRow(
                         label: suggestionSettings.acceptanceKeyLabel,

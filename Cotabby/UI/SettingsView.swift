@@ -283,6 +283,8 @@ struct SettingsView: View {
     @ViewBuilder
     private var shortcutsSection: some View {
         Section("Shortcuts") {
+            AcceptanceModePickerView(suggestionSettings: suggestionSettings)
+
             LabeledContent("Accept Word") {
                 HStack(spacing: 8) {
                     Text(suggestionSettings.acceptanceKeyLabel)
