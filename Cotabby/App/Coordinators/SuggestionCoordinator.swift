@@ -66,6 +66,11 @@ final class SuggestionCoordinator: ObservableObject {
     /// ready → accepted/rejected) can be joined with a single `jq` filter on `request_id`.
     /// `nil` between sessions; replaced when `+Prediction` builds the next request.
     var latestRequestID: String?
+    /// Set when a full acceptance commits its final chunk; consumed by the next `apply`. Lets the
+    /// coordinator drop a regeneration that only re-proposes the just-accepted tail before the host
+    /// publishes the insert, the Chromium AX-publish race that otherwise loops accept/regenerate/
+    /// accept on the last word. See `SuggestionSessionReconciler.isStaleAcceptanceEcho`.
+    var lastAcceptedTail: AcceptedSuggestionTail?
 
     init(
         permissionManager: any SuggestionPermissionProviding,
@@ -140,17 +145,13 @@ final class SuggestionCoordinator: ObservableObject {
             self?.handleSuppressedSyntheticInput()
         }
 
-        // Fail-open authorization for the active accept tap. The tap will only consume a
-        // keystroke when this predicate returns `true` at the moment the event arrives — i.e.,
-        // when the coordinator currently holds a ready, valid, visible suggestion session. Any
-        // lifecycle gap (tap left over after invalidate, stale settings race, etc.) collapses to
-        // "no" and the keystroke falls through to the host. Without this, the accept tap's
-        // matching predicate could swallow a keystroke based on stale state — exactly the
-        // "letter never reaches Chrome" report.
+        // Fail-open preflight for the active accept tap. The tap should only route a matching key
+        // into the coordinator while there is visible suggestion UI. We deliberately do not require
+        // `.ready` or even an active session here: a background refresh can move `state`, and if the
+        // session has gone stale the coordinator still needs one chance to hide the stale overlay
+        // before the tap passes the original key through.
         inputMonitor.shouldConsumeAcceptKeyProvider = { [weak self] in
             guard let self else { return false }
-            guard case .ready = self.state else { return false }
-            guard self.interactionState.activeSession != nil else { return false }
             guard self.overlayState.isVisible else { return false }
             return true
         }
