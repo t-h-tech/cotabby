@@ -13,7 +13,8 @@ extension SuggestionCoordinator {
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: focusModel.snapshot
+            focusSnapshot: focusModel.snapshot,
+            terminalIntegrationActive: terminalIntegrationActiveProvider()
         ) {
             disablePredictions(reason: disabledReason)
             return
@@ -52,7 +53,8 @@ extension SuggestionCoordinator {
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: snapshot
+            focusSnapshot: snapshot,
+            terminalIntegrationActive: terminalIntegrationActiveProvider()
         ) {
             disablePredictions(reason: disabledReason)
             return
@@ -149,7 +151,8 @@ extension SuggestionCoordinator {
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: snapshot
+            focusSnapshot: snapshot,
+            terminalIntegrationActive: terminalIntegrationActiveProvider()
         ) {
 
             disablePredictions(reason: disabledReason)
@@ -294,7 +297,8 @@ extension SuggestionCoordinator {
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: focusModel.snapshot
+            focusSnapshot: focusModel.snapshot,
+            terminalIntegrationActive: terminalIntegrationActiveProvider()
         )
 
         if disabledReason == nil {
@@ -428,6 +432,7 @@ extension SuggestionCoordinator {
         latestRemainingCharacterCount = nil
         latestAcceptanceAction = nil
         latestLatencyMilliseconds = nil
+        onSuggestionReadyChanged?(nil)
         interactionState.clearSuggestion()
 
         if clearDiagnostics {

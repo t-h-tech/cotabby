@@ -77,6 +77,13 @@ final class SuggestionSettingsModel: ObservableObject {
     @Published private(set) var globalToggleKeyModifiers: ShortcutModifierMask
     @Published private(set) var globalToggleKeyLabel: String
     @Published private(set) var acceptanceGranularity: AcceptanceGranularity
+    /// Whether the shell-integration-based terminal autocomplete subsystem is active.
+    @Published private(set) var isTerminalIntegrationEnabled: Bool
+    /// Acceptance key used when a terminal with active shell integration is focused.
+    /// Defaults to Option+Tab to avoid conflicting with shell tab completion.
+    @Published private(set) var terminalAcceptanceKeyCode: CGKeyCode
+    @Published private(set) var terminalAcceptanceKeyModifiers: ShortcutModifierMask
+    @Published private(set) var terminalAcceptanceKeyLabel: String
     private let userDefaults: UserDefaults
 
     private static let isGloballyEnabledDefaultsKey = "cotabbyGloballyEnabled"
@@ -119,6 +126,10 @@ final class SuggestionSettingsModel: ObservableObject {
     private static let globalToggleKeyModifiersDefaultsKey = "cotabbyGlobalToggleKeyModifiers"
     private static let globalToggleKeyLabelDefaultsKey = "cotabbyGlobalToggleKeyLabel"
     private static let acceptanceGranularityDefaultsKey = "cotabbyAcceptanceGranularity"
+    private static let terminalIntegrationEnabledDefaultsKey = "cotabbyTerminalIntegrationEnabled"
+    private static let terminalAcceptanceKeyCodeDefaultsKey = "cotabbyTerminalAcceptanceKeyCode"
+    private static let terminalAcceptanceKeyModifiersDefaultsKey = "cotabbyTerminalAcceptanceKeyModifiers"
+    private static let terminalAcceptanceKeyLabelDefaultsKey = "cotabbyTerminalAcceptanceKeyLabel"
 
     static let defaultAcceptanceKeyCode: CGKeyCode = 48
     static let defaultAcceptanceKeyLabel = "Tab"
@@ -130,6 +141,12 @@ final class SuggestionSettingsModel: ObservableObject {
     /// `` ` `` is rarely used in prose so the binding doesn't fight normal typing.
     static let defaultFullAcceptanceKeyCode: CGKeyCode = 50
     static let defaultFullAcceptanceKeyLabel = "`"
+    /// `kVK_RightArrow` (124), no modifiers. Right arrow is the standard terminal autocomplete
+    /// accept key (fish shell uses this). Natural UX: when a suggestion is visible, right arrow
+    /// accepts it; when no suggestion, the cursor is already at end-of-line so it's a no-op.
+    static let defaultTerminalAcceptanceKeyCode: CGKeyCode = 124
+    static let defaultTerminalAcceptanceKeyModifiers: ShortcutModifierMask = []
+    static let defaultTerminalAcceptanceKeyLabel = "→"
 
     /// Floor kept above zero so ghost text can be faded but never made fully invisible (which would
     /// look like the suggestion engine is broken). 100% is the out-of-box default.
@@ -308,6 +325,22 @@ final class SuggestionSettingsModel: ObservableObject {
             .flatMap(AcceptanceGranularity.init(rawValue:))
             ?? .word
 
+        let resolvedTerminalIntegrationEnabled =
+            userDefaults.object(forKey: Self.terminalIntegrationEnabledDefaultsKey) as? Bool ?? true
+        let resolvedTerminalAcceptanceKeyCode = CGKeyCode(
+            userDefaults.object(forKey: Self.terminalAcceptanceKeyCodeDefaultsKey) as? Int
+                ?? Int(Self.defaultTerminalAcceptanceKeyCode)
+        )
+        let resolvedTerminalAcceptanceKeyModifiers = ShortcutModifierMask(
+            rawValue: UInt32(
+                userDefaults.object(forKey: Self.terminalAcceptanceKeyModifiersDefaultsKey) as? Int
+                    ?? Int(Self.defaultTerminalAcceptanceKeyModifiers.rawValue)
+            )
+        )
+        let resolvedTerminalAcceptanceKeyLabel = userDefaults
+            .string(forKey: Self.terminalAcceptanceKeyLabelDefaultsKey)
+            ?? Self.defaultTerminalAcceptanceKeyLabel
+
         isGloballyEnabled = resolvedGloballyEnabled
         disabledAppRules = resolvedDisabledAppRules
         showIndicator = resolvedShowIndicator
@@ -342,6 +375,10 @@ final class SuggestionSettingsModel: ObservableObject {
         globalToggleKeyModifiers = resolvedGlobalToggleKeyModifiers
         globalToggleKeyLabel = resolvedGlobalToggleKeyLabel
         acceptanceGranularity = resolvedAcceptanceGranularity
+        isTerminalIntegrationEnabled = resolvedTerminalIntegrationEnabled
+        terminalAcceptanceKeyCode = resolvedTerminalAcceptanceKeyCode
+        terminalAcceptanceKeyModifiers = resolvedTerminalAcceptanceKeyModifiers
+        terminalAcceptanceKeyLabel = resolvedTerminalAcceptanceKeyLabel
 
         userDefaults.set(resolvedGloballyEnabled, forKey: Self.isGloballyEnabledDefaultsKey)
         persistDisabledAppRules(resolvedDisabledAppRules)
@@ -382,6 +419,13 @@ final class SuggestionSettingsModel: ObservableObject {
             forKey: Self.globalToggleKeyModifiersDefaultsKey
         )
         userDefaults.set(resolvedGlobalToggleKeyLabel, forKey: Self.globalToggleKeyLabelDefaultsKey)
+        userDefaults.set(resolvedTerminalIntegrationEnabled, forKey: Self.terminalIntegrationEnabledDefaultsKey)
+        userDefaults.set(Int(resolvedTerminalAcceptanceKeyCode), forKey: Self.terminalAcceptanceKeyCodeDefaultsKey)
+        userDefaults.set(
+            Int(resolvedTerminalAcceptanceKeyModifiers.rawValue),
+            forKey: Self.terminalAcceptanceKeyModifiersDefaultsKey
+        )
+        userDefaults.set(resolvedTerminalAcceptanceKeyLabel, forKey: Self.terminalAcceptanceKeyLabelDefaultsKey)
         userDefaults.set(resolvedAcceptanceGranularity.rawValue, forKey: Self.acceptanceGranularityDefaultsKey)
 
         // The custom indicator icon feature was removed; scrub any previously-persisted PNG so
@@ -853,6 +897,33 @@ final class SuggestionSettingsModel: ObservableObject {
 
     func clearGlobalToggleKey() {
         setGlobalToggleKey(keyCode: Self.disabledKeyCode, modifiers: [], label: Self.disabledKeyLabel)
+    }
+
+    func setTerminalIntegrationEnabled(_ enabled: Bool) {
+        guard isTerminalIntegrationEnabled != enabled else { return }
+        isTerminalIntegrationEnabled = enabled
+        userDefaults.set(enabled, forKey: Self.terminalIntegrationEnabledDefaultsKey)
+    }
+
+    func setTerminalAcceptanceKey(keyCode: CGKeyCode, modifiers: ShortcutModifierMask, label: String) {
+        let normalizedModifiers = keyCode == Self.disabledKeyCode ? [] : modifiers
+        guard terminalAcceptanceKeyCode != keyCode
+            || terminalAcceptanceKeyModifiers != normalizedModifiers
+            || terminalAcceptanceKeyLabel != label
+        else {
+            return
+        }
+
+        terminalAcceptanceKeyCode = keyCode
+        terminalAcceptanceKeyModifiers = normalizedModifiers
+        terminalAcceptanceKeyLabel = label
+        userDefaults.set(Int(keyCode), forKey: Self.terminalAcceptanceKeyCodeDefaultsKey)
+        userDefaults.set(Int(normalizedModifiers.rawValue), forKey: Self.terminalAcceptanceKeyModifiersDefaultsKey)
+        userDefaults.set(label, forKey: Self.terminalAcceptanceKeyLabelDefaultsKey)
+    }
+
+    func clearTerminalAcceptanceKey() {
+        setTerminalAcceptanceKey(keyCode: Self.disabledKeyCode, modifiers: [], label: Self.disabledKeyLabel)
     }
 
     // All stored state is thread-safe to release (Combine subjects, UserDefaults). The

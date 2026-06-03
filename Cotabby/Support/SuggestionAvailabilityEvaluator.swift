@@ -13,7 +13,8 @@ enum SuggestionAvailabilityEvaluator {
         inputMonitoringGranted: Bool,
         screenRecordingGranted: Bool,
         focusSnapshot: FocusSnapshot,
-        checkCapability: Bool = true
+        checkCapability: Bool = true,
+        terminalIntegrationActive: Bool = false
     ) -> String? {
         guard globallyEnabled else {
             return "Cotabby is turned off."
@@ -24,8 +25,10 @@ enum SuggestionAvailabilityEvaluator {
             return "Cotabby is disabled in \(focusSnapshot.applicationName)."
         }
 
-        if TerminalAppDetector.isTerminal(bundleIdentifier: focusSnapshot.bundleIdentifier) {
-            return "Cotabby is not available in terminal apps."
+        if TerminalAppDetector.isTerminal(bundleIdentifier: focusSnapshot.bundleIdentifier),
+           !terminalIntegrationActive {
+            return "Cotabby is not available in terminal apps without shell integration. "
+                + "See Settings → Terminal Integration to set up shell hooks."
         }
 
         guard inputMonitoringGranted else {
@@ -54,14 +57,16 @@ enum SuggestionAvailabilityEvaluator {
         disabledAppBundleIdentifiers: Set<String> = [],
         inputMonitoringGranted: Bool,
         screenRecordingGranted: Bool,
-        focusSnapshot: FocusSnapshot
+        focusSnapshot: FocusSnapshot,
+        terminalIntegrationActive: Bool = false
     ) -> Bool {
         disabledReason(
             globallyEnabled: globallyEnabled,
             disabledAppBundleIdentifiers: disabledAppBundleIdentifiers,
             inputMonitoringGranted: inputMonitoringGranted,
             screenRecordingGranted: screenRecordingGranted,
-            focusSnapshot: focusSnapshot
+            focusSnapshot: focusSnapshot,
+            terminalIntegrationActive: terminalIntegrationActive
         ) == nil
     }
 
@@ -80,7 +85,8 @@ enum SuggestionAvailabilityEvaluator {
         inputMonitoringGranted: Bool,
         screenRecordingGranted: Bool,
         focusSnapshot: FocusSnapshot,
-        isFastModeEnabled: Bool = false
+        isFastModeEnabled: Bool = false,
+        terminalIntegrationActive: Bool = false
     ) -> Bool {
         guard !isFastModeEnabled else {
             return false
@@ -92,7 +98,8 @@ enum SuggestionAvailabilityEvaluator {
             inputMonitoringGranted: inputMonitoringGranted,
             screenRecordingGranted: screenRecordingGranted,
             focusSnapshot: focusSnapshot,
-            checkCapability: false
+            checkCapability: false,
+            terminalIntegrationActive: terminalIntegrationActive
         ) == nil
     }
 

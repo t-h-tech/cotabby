@@ -107,9 +107,17 @@ extension SuggestionCoordinator {
             precedingText: liveContext.precedingText
         )
 
+        // In terminals, skip insertion — the shell hook's zle widget handles it via the suggestion
+        // file. The acceptance key passes through to zsh, the widget reads the file, and appends
+        // the text to zsh's BUFFER.
+        let terminalPassThrough = terminalIntegrationActiveProvider()
+            || TerminalAppDetector.isTerminal(
+                bundleIdentifier: focusModel.snapshot.bundleIdentifier
+            )
+
         // An empty chunk means the accepted span was entirely a boundary space the field already
         // supplies: advance the session without synthesizing a keystroke.
-        if !insertionChunk.isEmpty, !suggestionInserter.insert(insertionChunk) {
+        if !terminalPassThrough, !insertionChunk.isEmpty, !suggestionInserter.insert(insertionChunk) {
             let message = suggestionInserter.lastErrorMessage ?? "Suggestion insertion failed."
             cancelPredictionWork()
             clearSuggestion(clearDiagnostics: true)
@@ -381,6 +389,7 @@ extension SuggestionCoordinator {
         if let acceptanceAction {
             latestAcceptanceAction = acceptanceAction
         }
+        onSuggestionReadyChanged?(session.remainingText)
     }
 
     /// Updates the global productivity counter from text accepted via Tab.

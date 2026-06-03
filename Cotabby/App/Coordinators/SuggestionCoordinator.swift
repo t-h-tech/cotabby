@@ -58,6 +58,15 @@ final class SuggestionCoordinator: ObservableObject {
     /// consumption happens through `InputMonitor.emojiCaptureKeyDecider`.
     var emojiInputObserver: ((CapturedInputEvent) -> Bool)?
 
+    /// Returns whether a terminal with active shell integration is currently focused.
+    /// Set by `CotabbyAppEnvironment` to check `TerminalIntegrationService` state.
+    var terminalIntegrationActiveProvider: @MainActor () -> Bool = { false }
+
+    /// Called when a suggestion enters the ready state with the full suggestion text,
+    /// or with nil when the suggestion is dismissed. Used by terminal integration to
+    /// write the suggestion to a file for shell-side acceptance.
+    var onSuggestionReadyChanged: ((String?) -> Void)?
+
     static let totalTabAcceptedWordCountDefaultsKey = "cotabbyTotalAcceptedWordCount"
 
     // Combine subscriptions are the coordinator's remaining direct mutable bookkeeping.

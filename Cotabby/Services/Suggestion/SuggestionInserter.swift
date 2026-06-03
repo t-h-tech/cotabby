@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import Foundation
 import Logging
@@ -23,8 +24,75 @@ final class SuggestionInserter {
         self.suppressionController = suppressionController
     }
 
+    /// Whether the currently focused app is a terminal with shell integration. When true,
+    /// insertion sends characters one at a time instead of as a single multi-character event,
+    /// because terminals process input as individual keystrokes.
+    var isTerminalMode: Bool = false
+
     /// Posts a Unicode keydown/keyup pair for the accepted suggestion and reports any insertion failure.
     func insert(_ suggestion: String) -> Bool {
+        if isTerminalMode {
+            return insertForTerminal(suggestion)
+        }
+        return insertStandard(suggestion)
+    }
+
+    /// Terminal-specific insertion via clipboard paste (Cmd+V).
+    ///
+    /// Synthetic keyboard events (both single and character-by-character) are unreliable in modern
+    /// terminals like Ghostty that use the kitty keyboard protocol. Clipboard paste is universally
+    /// supported and atomic — the terminal receives the full text in one operation via bracketed
+    /// paste mode.
+    private func insertForTerminal(_ suggestion: String) -> Bool {
+        let normalized = suggestion.replacingOccurrences(of: "\r", with: "")
+        guard !normalized.isEmpty else {
+            lastErrorMessage = "Suggestion was empty."
+            return false
+        }
+
+        let pasteboard = NSPasteboard.general
+        let previousContents = pasteboard.string(forType: .string)
+
+        pasteboard.clearContents()
+        pasteboard.setString(normalized, forType: .string)
+
+        // Synthesize Cmd+V (paste). virtualKey 9 = kVK_ANSI_V.
+        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else {
+            lastErrorMessage = "Unable to create a synthetic paste event."
+            // Restore clipboard before returning.
+            pasteboard.clearContents()
+            if let previous = previousContents {
+                pasteboard.setString(previous, forType: .string)
+            }
+            return false
+        }
+
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        suppressionController.registerSyntheticInsertion(expectedKeyDownCount: 1)
+        suppressionController.markSynthetic(keyDown)
+        suppressionController.markSynthetic(keyUp)
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+
+        // Restore the previous clipboard contents after a short delay so the paste completes first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            pasteboard.clearContents()
+            if let previous = previousContents {
+                pasteboard.setString(previous, forType: .string)
+            }
+        }
+
+        lastErrorMessage = nil
+        CotabbyLogger.suggestion.debug(
+            "Inserted \(normalized.count) characters via terminal-mode clipboard paste"
+        )
+        return true
+    }
+
+    /// Standard insertion: posts the entire suggestion as one multi-character Unicode event.
+    private func insertStandard(_ suggestion: String) -> Bool {
         let normalized = suggestion.replacingOccurrences(of: "\r", with: "")
         guard !normalized.isEmpty else {
             lastErrorMessage = "Suggestion was empty."

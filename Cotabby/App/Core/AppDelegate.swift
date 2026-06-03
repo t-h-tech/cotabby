@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let emojiPickerController: EmojiPickerController
     let welcomeCoordinator: WelcomeCoordinator
     let settingsCoordinator: SettingsCoordinator
+    let terminalIntegrationService: TerminalIntegrationService
 
     private let activationIndicatorController: ActivationIndicatorController
     private let focusDebugOverlayController: FocusDebugOverlayController?
@@ -55,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         emojiPickerController = environment.emojiPickerController
         welcomeCoordinator = environment.welcomeCoordinator
         settingsCoordinator = environment.settingsCoordinator
+        terminalIntegrationService = environment.terminalIntegrationService
         activationIndicatorController = environment.activationIndicatorController
         focusDebugOverlayController = environment.focusDebugOverlayController
         super.init()
@@ -125,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CotabbyLogger.app.info("Cotabby \(version) (build \(build)) launching on macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
         startRuntimeIfPreferredEngineRequiresIt()
         focusModel.start()
+        terminalIntegrationService.start()
         inputMonitor.start()
         appUpdateManager.start()
         suggestionCoordinator.start()
@@ -160,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         suggestionCoordinator.stop()
         emojiPickerController.stop()
         inputMonitor.stop()
+        terminalIntegrationService.stop()
         focusModel.stop()
 
         runtimeModel.shutdownSync(timeoutSeconds: 1.5)

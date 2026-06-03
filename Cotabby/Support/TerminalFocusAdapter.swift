@@ -1,0 +1,163 @@
+import CoreGraphics
+import Foundation
+
+/// File overview:
+/// Bridges the terminal shell-integration data source into the existing suggestion pipeline by
+/// converting `TerminalFocusSnapshot` into `FocusedInputSnapshot`.
+///
+/// The suggestion pipeline — `SuggestionRequestFactory`, `SuggestionCoordinator`, overlay
+/// positioning — all consume `FocusedInputSnapshot`. Rather than forking that pipeline, this
+/// adapter maps terminal-sourced data into the same shape, filling in synthetic values for fields
+/// that have no terminal analogue (e.g. `role`, `isSecure`, `elementIdentifier`).
+enum TerminalFocusAdapter {
+
+    /// Converts a terminal snapshot into a `FocusedInputSnapshot` that the suggestion pipeline
+    /// can consume directly.
+    ///
+    /// - Parameters:
+    ///   - snapshot: The terminal focus state received from a shell hook.
+    ///   - focusChangeSequence: The monotonic focus-change counter from `FocusTracker`. Callers
+    ///     must provide the current sequence value so downstream staleness checks work correctly.
+    /// - Returns: A `FocusedInputSnapshot` with terminal-appropriate defaults.
+    /// - Parameters:
+    ///   - snapshot: The terminal focus state received from a shell hook.
+    ///   - terminalPid: The terminal app's process identifier (e.g. Ghostty's PID), not the
+    ///     shell's PID. The overlay system uses this to find the terminal's window.
+    ///   - focusChangeSequence: The monotonic focus-change counter from `FocusTracker`.
+    static func adapt(
+        _ snapshot: TerminalFocusSnapshot,
+        terminalPid: Int32? = nil,
+        focusChangeSequence: UInt64
+    ) -> FocusedInputSnapshot {
+        let caretRect = resolveCaret(from: snapshot)
+        let cursorCharacterOffset = resolvedCursorOffset(from: snapshot)
+        let resolvedPid = terminalPid ?? snapshot.shellPid
+
+        return FocusedInputSnapshot(
+            applicationName: applicationName(for: snapshot.terminalBundleIdentifier),
+            bundleIdentifier: snapshot.terminalBundleIdentifier,
+            processIdentifier: resolvedPid,
+            elementIdentifier: "terminal-\(snapshot.shellPid)",
+            role: "TerminalShellInput",
+            subrole: snapshot.shellType.rawValue,
+            caretRect: caretRect,
+            inputFrameRect: snapshot.terminalWindowFrame,
+            caretSource: "TerminalShellIntegration",
+            caretQuality: .estimated,
+            observedCharWidth: TerminalGeometryResolver.defaultCellMetrics.cellWidth,
+            precedingText: precedingText(
+                from: snapshot.commandBuffer,
+                cursorOffset: cursorCharacterOffset
+            ),
+            trailingText: trailingText(
+                from: snapshot.commandBuffer,
+                cursorOffset: cursorCharacterOffset
+            ),
+            selection: NSRange(location: cursorCharacterOffset, length: 0),
+            isSecure: false,
+            focusChangeSequence: focusChangeSequence
+        )
+    }
+
+    // MARK: - Private
+
+    /// Resolves the caret rect from the snapshot's geometry data, falling back to a default
+    /// off-screen rect if no geometry is available.
+    private static func resolveCaret(from snapshot: TerminalFocusSnapshot) -> CGRect {
+        if let cursorPos = snapshot.estimatedCursorPosition {
+            let metrics = TerminalGeometryResolver.defaultCellMetrics
+            return CGRect(
+                x: cursorPos.x - metrics.cellWidth / 2,
+                y: cursorPos.y - metrics.cellHeight / 2,
+                width: metrics.cellWidth,
+                height: metrics.cellHeight
+            )
+        }
+
+        if let windowFrame = snapshot.terminalWindowFrame {
+            return TerminalGeometryResolver.fallbackCursorRect(windowFrame: windowFrame)
+        }
+
+        // No geometry at all — return a zero rect. The overlay system will not display
+        // when the caret rect is zero-sized.
+        return .zero
+    }
+
+    /// Resolves the cursor offset to a character offset regardless of shell type.
+    ///
+    /// Bash's `READLINE_POINT` is a byte offset into the UTF-8 buffer. Zsh's `$CURSOR` is
+    /// already a character offset. This normalizes both to character offsets.
+    private static func resolvedCursorOffset(from snapshot: TerminalFocusSnapshot) -> Int {
+        switch snapshot.shellType {
+        case .bash:
+            return byteOffsetToCharacterOffset(
+                snapshot.cursorOffset,
+                in: snapshot.commandBuffer
+            )
+        case .zsh, .fish:
+            return snapshot.cursorOffset
+        }
+    }
+
+    /// Converts a UTF-8 byte offset to a Swift character offset.
+    private static func byteOffsetToCharacterOffset(_ byteOffset: Int, in string: String) -> Int {
+        let utf8 = string.utf8
+        let clampedOffset = min(byteOffset, utf8.count)
+        guard let targetIndex = utf8.index(
+            utf8.startIndex,
+            offsetBy: clampedOffset,
+            limitedBy: utf8.endIndex
+        ) else {
+            return string.count
+        }
+        return string.distance(from: string.startIndex, to: targetIndex)
+    }
+
+    private static func precedingText(from buffer: String, cursorOffset: Int) -> String {
+        guard cursorOffset >= 0, cursorOffset <= buffer.count else { return buffer }
+        let index = buffer.index(
+            buffer.startIndex,
+            offsetBy: cursorOffset,
+            limitedBy: buffer.endIndex
+        ) ?? buffer.endIndex
+        return String(buffer[..<index])
+    }
+
+    private static func trailingText(from buffer: String, cursorOffset: Int) -> String {
+        guard cursorOffset >= 0, cursorOffset <= buffer.count else { return "" }
+        let index = buffer.index(
+            buffer.startIndex,
+            offsetBy: cursorOffset,
+            limitedBy: buffer.endIndex
+        ) ?? buffer.endIndex
+        return String(buffer[index...])
+    }
+
+    /// Maps a terminal bundle identifier to a human-readable name for menu bar display.
+    private static func applicationName(for bundleIdentifier: String) -> String {
+        switch bundleIdentifier {
+        case "com.mitchellh.ghostty":
+            return "Ghostty"
+        case "com.apple.Terminal":
+            return "Terminal"
+        case "com.googlecode.iterm2":
+            return "iTerm2"
+        case "net.kovidgoyal.kitty":
+            return "Kitty"
+        case "io.alacritty":
+            return "Alacritty"
+        case "co.zeit.hyper":
+            return "Hyper"
+        case "dev.warp.Warp-Stable":
+            return "Warp"
+        case "com.github.wez.wezterm":
+            return "WezTerm"
+        case "io.rio.terminal":
+            return "Rio"
+        case "com.microsoft.VSCode":
+            return "VS Code"
+        default:
+            return bundleIdentifier
+        }
+    }
+}

@@ -17,6 +17,11 @@ final class FocusTrackingModel: ObservableObject {
     private let ignoredBundleIdentifier: String?
     private var isStarted = false
 
+    /// When set, AX-polled snapshots for this bundle identifier are ignored so they don't
+    /// overwrite terminal-injected snapshots. Cleared automatically when the user switches
+    /// to a different app (the AX poll reports a different bundle ID).
+    private var terminalInjectedBundleIdentifier: String?
+
     init(
         permissionProvider: @escaping @MainActor () -> Bool,
         ignoredBundleIdentifier: String?,
@@ -35,8 +40,20 @@ final class FocusTrackingModel: ObservableObject {
         )
 
         tracker.onSnapshotChange = { [weak self] snapshot in
-            self?.snapshot = snapshot
-            self?.updateLatestExternalApplication(from: snapshot)
+            guard let self else { return }
+            // When a terminal snapshot has been injected, AX polls for that same terminal
+            // must not overwrite it — the terminal's AX tree has no editable text fields, so
+            // the polled snapshot would always be .unsupported and would kill the suggestion.
+            if let terminalBid = self.terminalInjectedBundleIdentifier {
+                if snapshot.bundleIdentifier == terminalBid {
+                    // Same terminal still focused — keep the terminal-injected snapshot.
+                    return
+                }
+                // User switched away from the terminal — resume normal AX polling.
+                self.terminalInjectedBundleIdentifier = nil
+            }
+            self.snapshot = snapshot
+            self.updateLatestExternalApplication(from: snapshot)
         }
 
         if publishesPollingEvents {
@@ -72,6 +89,23 @@ final class FocusTrackingModel: ObservableObject {
     /// Updates the AX polling interval at runtime. Restarts the timer if already running.
     func updatePollInterval(milliseconds: Int) {
         tracker.updatePollInterval(TimeInterval(milliseconds) / 1000.0)
+    }
+
+    /// Injects a terminal-sourced focus snapshot, bypassing AX polling.
+    ///
+    /// When a shell integration session is active, the terminal subsystem converts its IPC data into
+    /// a `FocusSnapshot` and pushes it here. The published snapshot triggers the same Combine
+    /// pipeline that AX-polled snapshots use, so the coordinator sees terminal input identically.
+    func injectTerminalSnapshot(_ terminalSnapshot: FocusSnapshot) {
+        terminalInjectedBundleIdentifier = terminalSnapshot.bundleIdentifier
+        snapshot = terminalSnapshot
+        updateLatestExternalApplication(from: terminalSnapshot)
+    }
+
+    /// Clears the terminal injection suppression so AX polling resumes for all apps.
+    /// Called when a terminal shell integration session disconnects.
+    func clearTerminalInjection() {
+        terminalInjectedBundleIdentifier = nil
     }
 
     /// The menu bar needs a compact status string, not the full diagnostic reason.

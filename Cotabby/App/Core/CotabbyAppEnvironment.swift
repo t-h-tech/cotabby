@@ -36,6 +36,7 @@ final class CotabbyAppEnvironment {
     let settingsCoordinator: SettingsCoordinator
     let activationIndicatorController: ActivationIndicatorController
     let focusDebugOverlayController: FocusDebugOverlayController?
+    let terminalIntegrationService: TerminalIntegrationService
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -56,8 +57,8 @@ final class CotabbyAppEnvironment {
             permissionProvider: { permissionManager.inputMonitoringGranted },
             suppressionController: suppressionController
         )
-        inputMonitor.acceptanceKeyCodeProvider = { suggestionSettings.acceptanceKeyCode }
-        inputMonitor.acceptanceKeyModifiersProvider = { suggestionSettings.acceptanceKeyModifiers }
+        // Acceptance key providers are set after focusModel and terminalIntegrationService
+        // are created, since terminal-aware key selection reads both.
         inputMonitor.fullAcceptanceKeyCodeProvider = { suggestionSettings.fullAcceptanceKeyCode }
         inputMonitor.fullAcceptanceKeyModifiersProvider = { suggestionSettings.fullAcceptanceKeyModifiers }
         inputMonitor.globalToggleKeyCodeProvider = { suggestionSettings.globalToggleKeyCode }
@@ -70,6 +71,7 @@ final class CotabbyAppEnvironment {
         // the user toggles Cotabby off, which can dismiss transient popovers in apps like Calendar
         // (#476). Gating here also makes the "I disabled it but the bug remained" symptom go away:
         // the disable toggles now actually stop touching the focused app.
+        let terminalIntegrationService = TerminalIntegrationService()
         let focusModel = FocusTrackingModel(
             permissionProvider: { permissionManager.accessibilityGranted },
             ignoredBundleIdentifier: Bundle.main.bundleIdentifier,
@@ -86,15 +88,50 @@ final class CotabbyAppEnvironment {
         // The snapshot is poll-based, so after a fast app switch the closure may briefly
         // evaluate against the previous app's identity until the next AX poll fires. This
         // is the same race the downstream evaluator already has — not a new regression.
+
         inputMonitor.shouldProcessEventsProvider = { [weak focusModel] in
             guard suggestionSettings.isGloballyEnabled else { return false }
             guard let snapshot = focusModel?.snapshot else { return true }
-            if TerminalAppDetector.isTerminal(bundleIdentifier: snapshot.bundleIdentifier) { return false }
+            // Allow input processing for terminals with active shell integration.
+            if TerminalAppDetector.isTerminal(bundleIdentifier: snapshot.bundleIdentifier) {
+                guard let bid = snapshot.bundleIdentifier,
+                      suggestionSettings.isTerminalIntegrationEnabled,
+                      terminalIntegrationService.hasActiveSession(forBundleIdentifier: bid) else {
+                    return false
+                }
+                return true
+            }
             if let bundleID = snapshot.bundleIdentifier,
                suggestionSettings.isApplicationDisabled(bundleIdentifier: bundleID) {
                 return false
             }
             return true
+        }
+        // Now that focusModel and terminalIntegrationService exist, set the terminal-aware
+        // acceptance key providers. When a terminal with shell integration is focused, the
+        // acceptance key swaps to the terminal-specific binding (Option+Tab by default).
+        inputMonitor.acceptanceKeyCodeProvider = { [weak focusModel] in
+            if let bid = focusModel?.snapshot.bundleIdentifier,
+               TerminalAppDetector.isTerminal(bundleIdentifier: bid),
+               suggestionSettings.isTerminalIntegrationEnabled {
+                return suggestionSettings.terminalAcceptanceKeyCode
+            }
+            return suggestionSettings.acceptanceKeyCode
+        }
+        inputMonitor.acceptanceKeyModifiersProvider = { [weak focusModel] in
+            if let bid = focusModel?.snapshot.bundleIdentifier,
+               TerminalAppDetector.isTerminal(bundleIdentifier: bid),
+               suggestionSettings.isTerminalIntegrationEnabled {
+                return suggestionSettings.terminalAcceptanceKeyModifiers
+            }
+            return suggestionSettings.acceptanceKeyModifiers
+        }
+        // In terminals, let the acceptance keystroke pass through so the shell hook's zle widget
+        // can see it and insert the text into zsh's BUFFER.
+        inputMonitor.shouldPassThroughAcceptKeyProvider = { [weak focusModel] in
+            guard let bid = focusModel?.snapshot.bundleIdentifier else { return false }
+            return TerminalAppDetector.isTerminal(bundleIdentifier: bid)
+                && suggestionSettings.isTerminalIntegrationEnabled
         }
         let appUpdateManager = AppUpdateManager()
         let launchAtLoginService = LaunchAtLoginService()
@@ -211,6 +248,46 @@ final class CotabbyAppEnvironment {
             emojiPickerController?.observe(event) ?? false
         }
 
+        // Terminal integration: tell the coordinator how to check for active shell sessions.
+        suggestionCoordinator.terminalIntegrationActiveProvider = { [weak focusModel] in
+            guard suggestionSettings.isTerminalIntegrationEnabled else { return false }
+            guard let bid = focusModel?.snapshot.bundleIdentifier else { return false }
+            return TerminalAppDetector.isTerminal(bundleIdentifier: bid)
+                && terminalIntegrationService.hasActiveSession(forBundleIdentifier: bid)
+        }
+
+        // When a shell hook reports buffer state, enrich it with geometry and inject it into
+        // the focus model so the suggestion pipeline sees terminal input like any other field.
+        terminalIntegrationService.onSnapshotUpdate = { [weak focusModel] rawSnapshot in
+            suggestionInserter.isTerminalMode = true
+            let enriched = TerminalGeometryResolver.enrichWithGeometry(rawSnapshot)
+            let adapted = TerminalFocusAdapter.adapt(
+                enriched,
+                terminalPid: TerminalGeometryResolver.terminalAppPid(
+                    forBundleIdentifier: enriched.terminalBundleIdentifier
+                ),
+                focusChangeSequence: UInt64(enriched.shellPid)
+            )
+            let focusSnapshot = FocusSnapshot(
+                applicationName: adapted.applicationName,
+                bundleIdentifier: adapted.bundleIdentifier,
+                capability: .supported,
+                context: adapted,
+                inspection: nil
+            )
+            focusModel?.injectTerminalSnapshot(focusSnapshot)
+        }
+
+        // When a shell session connects or disconnects, reconcile the coordinator state
+        // and clear AX polling suppression so normal focus tracking resumes.
+        terminalIntegrationService.onSessionChange = { [weak suggestionCoordinator, weak focusModel] in
+            if terminalIntegrationService.sessions.isEmpty {
+                focusModel?.clearTerminalInjection()
+                suggestionInserter.isTerminalMode = false
+            }
+            suggestionCoordinator?.reconcileWithCurrentEnvironment()
+        }
+
         self.permissionManager = permissionManager
         self.runtimeModel = runtimeModel
         self.modelDownloadManager = modelDownloadManager
@@ -234,6 +311,32 @@ final class CotabbyAppEnvironment {
         self.focusDebugOverlayController = FocusDebugOverlayController.isEnabled
             ? FocusDebugOverlayController()
             : nil
+        self.terminalIntegrationService = terminalIntegrationService
+
+        // Write the current suggestion to a file so the shell hook can read and insert it
+        // when the user presses right-arrow. This bypasses CGEvent tap issues in terminals.
+        let suggestionFilePath = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first!.appendingPathComponent("Cotabby/terminal-suggestion.txt").path
+
+        suggestionCoordinator.onSuggestionReadyChanged = { [weak focusModel] suggestion in
+            // Write the suggestion file whenever the focused app is a terminal with an active
+            // shell integration session. The zsh hook reads this file when right-arrow is pressed.
+            // Check by bundle ID + active session rather than isTerminalMode or element ID,
+            // because the AX pipeline may handle Ghostty with a non-terminal element ID.
+            let bid = focusModel?.snapshot.bundleIdentifier
+            let isTerminal = bid.map { TerminalAppDetector.isTerminal(bundleIdentifier: $0) } ?? false
+
+            if isTerminal, let text = suggestion, !text.isEmpty {
+                try? text.write(toFile: suggestionFilePath, atomically: true, encoding: .utf8)
+            } else if !isTerminal {
+                // Only delete the file when NOT in a terminal. In terminals, the zsh hook's
+                // forward-char widget reads and deletes the file after inserting the text.
+                // Deleting here would race with the widget and prevent acceptance.
+                try? FileManager.default.removeItem(atPath: suggestionFilePath)
+            }
+        }
 
         // Update the AX polling timer whenever the user changes the poll interval setting.
         suggestionSettings.$focusPollIntervalMilliseconds
