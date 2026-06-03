@@ -42,6 +42,7 @@
 		19CB55B62977376E9AE8D428 /* VisualContextStartCoalescer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F01FAC4F57EB08471521196 /* VisualContextStartCoalescer.swift */; };
 		1B3FFCB9A979F49BF86EAAD4 /* ScreenshotContextGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BFD19A159680A495EE02FD /* ScreenshotContextGeneratorTests.swift */; };
 		1D1C6FF0B8F50AC14A1000F4 /* SentenceBoundaryClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D7360A6D4261989A66658ED /* SentenceBoundaryClassifierTests.swift */; };
+		1E0DE04F81FB92DD77043CC9 /* cotabby.bash in CopyFiles */ = {isa = PBXBuildFile; fileRef = B0520F0205BFEAC9C5FDDD3E /* cotabby.bash */; };
 		1F8CC88AFFE67C08944CF506 /* WindowScreenshotService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77B0121E7BB173F8A2B0B108 /* WindowScreenshotService.swift */; };
 		2197B68F1E4D0C3497DAC061 /* LlamaSuggestionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE04620C905041680116BE80 /* LlamaSuggestionEngine.swift */; };
 		22DF59FD6F3B83B092A6F5ED /* WordCountFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 815F2ABAF6AB75DA3AFBBCEF /* WordCountFormatter.swift */; };
@@ -131,6 +132,7 @@
 		73704AE903CDD0B7800C89B6 /* TerminalFocusModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 630C9C6AE4DAC991702B54DB /* TerminalFocusModels.swift */; };
 		744B06C2488156B178675615 /* PermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85BF316556FDA64CB8AD07B6 /* PermissionManager.swift */; };
 		76FD91607794883F8E121450 /* CaretGeometrySelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3C84377F352140759B448C9 /* CaretGeometrySelector.swift */; };
+		77A1B96E29D83C79AD908D56 /* cotabby.zsh in CopyFiles */ = {isa = PBXBuildFile; fileRef = 6C5C0715FC1B971341BE4C57 /* cotabby.zsh */; };
 		78A8713A0E5B4C89E2D715BC /* FocusCapabilityFlickerGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1972BD2C5254D8266618781F /* FocusCapabilityFlickerGateTests.swift */; };
 		78FAE5DB691A1B71042B9D20 /* AboutPaneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3FA53BBC3D81503C1D17477 /* AboutPaneView.swift */; };
 		7B6A63F5DCC2C163CDFD2A5C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BC4F887528AE74AC0DD30314 /* Assets.xcassets */; };
@@ -264,6 +266,20 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		74DD63FB499E321DA9BD73A3 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "shell-integration";
+			dstSubfolderSpec = 7;
+			files = (
+				1E0DE04F81FB92DD77043CC9 /* cotabby.bash in CopyFiles */,
+				77A1B96E29D83C79AD908D56 /* cotabby.zsh in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		003594B09C83EF2DF35577D5 /* SuggestionDebugLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionDebugLogger.swift; sourceTree = "<group>"; };
 		00824BDD8D0E9B3063827C78 /* MenuBarPresentationObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarPresentationObserver.swift; sourceTree = "<group>"; };
@@ -368,6 +384,7 @@
 		67586807ACE8EB13C9014535 /* TickMarkSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TickMarkSlider.swift; sourceTree = "<group>"; };
 		6A44BEC8C23FF227731DD0CD /* FocusCapabilityFlickerGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusCapabilityFlickerGate.swift; sourceTree = "<group>"; };
 		6B2D97BAA3618A7D0357AC44 /* SuggestionWorkController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionWorkController.swift; sourceTree = "<group>"; };
+		6C5C0715FC1B971341BE4C57 /* cotabby.zsh */ = {isa = PBXFileReference; lastKnownFileType = text; path = cotabby.zsh; sourceTree = "<group>"; };
 		6DC693E00430F46E41CB56E6 /* RequestID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestID.swift; sourceTree = "<group>"; };
 		70367FCC1E0F08EE3B8EB26F /* FocusCapabilityResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusCapabilityResolver.swift; sourceTree = "<group>"; };
 		711293EA57808B9428C7B908 /* CotabbyAppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CotabbyAppEnvironment.swift; sourceTree = "<group>"; };
@@ -432,6 +449,7 @@
 		ADBE3E6CC585C1683787C877 /* SuggestionEngineModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionEngineModels.swift; sourceTree = "<group>"; };
 		AF1E065C7FFB697FCEB2FA5C /* CotabbyTestFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CotabbyTestFixtures.swift; sourceTree = "<group>"; };
 		AFCFCCCB69C29A86E726B10A /* PromptSectionBudget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptSectionBudget.swift; sourceTree = "<group>"; };
+		B0520F0205BFEAC9C5FDDD3E /* cotabby.bash */ = {isa = PBXFileReference; lastKnownFileType = text; path = cotabby.bash; sourceTree = "<group>"; };
 		B22FDEB3B1DCC9ADE906CC73 /* OCRTextHygiene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRTextHygiene.swift; sourceTree = "<group>"; };
 		B2BFD19A159680A495EE02FD /* ScreenshotContextGeneratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotContextGeneratorTests.swift; sourceTree = "<group>"; };
 		B2F95847D76893C8A5B504B4 /* SuggestionOverlayStabilityGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionOverlayStabilityGate.swift; sourceTree = "<group>"; };
@@ -555,6 +573,16 @@
 				2D1F9CEBAB0F330F8E7B61D8 /* InputSuppressionController.swift */,
 			);
 			path = Input;
+			sourceTree = "<group>";
+		};
+		1E5A42D79AD6858AED8B29BB /* shell-integration */ = {
+			isa = PBXGroup;
+			children = (
+				B0520F0205BFEAC9C5FDDD3E /* cotabby.bash */,
+				6C5C0715FC1B971341BE4C57 /* cotabby.zsh */,
+			);
+			name = "shell-integration";
+			path = "scripts/shell-integration";
 			sourceTree = "<group>";
 		};
 		1F3BF5BD8958D0D0C2E34AF1 /* Permission */ = {
@@ -865,6 +893,7 @@
 			children = (
 				10701CD228D9F70454402BED /* Cotabby */,
 				A8A141E1F2137943476D0C82 /* CotabbyTests */,
+				1E5A42D79AD6858AED8B29BB /* shell-integration */,
 				3725B1A195A06A4F014B75B1 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -983,6 +1012,7 @@
 			buildPhases = (
 				B46510C95913ADDBA972CADE /* Sources */,
 				5BD676C1D87B642F7A4BF214 /* Resources */,
+				74DD63FB499E321DA9BD73A3 /* CopyFiles */,
 				658F2109EF7F1517DEA48DEB /* Frameworks */,
 			);
 			buildRules = (
@@ -1028,7 +1058,6 @@
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
 					622CFE93F0FE48C8243E060C = {
-						DevelopmentTeam = G946M8K23B;
 						ProvisioningStyle = Automatic;
 					};
 					AB3DFA4CFA5EBC6161F02A30 = {
@@ -1349,6 +1378,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = G946M8K23B;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -1537,6 +1567,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = G946M8K23B;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
