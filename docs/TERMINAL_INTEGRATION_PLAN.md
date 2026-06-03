@@ -610,21 +610,14 @@ Verify:
 - [ ] Key label updates in UI
 - [ ] Custom keys (e.g., Option+Tab) work
 
-### 7.3 — Bundle shell scripts into app
+### 7.3 — Bundle shell scripts into app (DONE)
 
-The scripts are currently at `scripts/shell-integration/`. For distribution,
-they must ship inside the `.app` bundle.
+The `copyFiles` phase was added to `project.yml`. After `xcodegen generate` and
+rebuild, the scripts ship inside the `.app` bundle at:
 
-1. Edit `project.yml` to add a Copy Files build phase:
-   - Source: `scripts/shell-integration/cotabby.bash`,
-     `scripts/shell-integration/cotabby.zsh`
-   - Destination: `Resources/shell-integration/`
-2. Run `xcodegen generate` and rebuild.
-3. Verify scripts appear in the built app:
-
-```bash
-ls build/DerivedData/Build/Products/Debug/Cotabby.app/Contents/Resources/shell-integration/
-# Expected: cotabby.bash  cotabby.zsh
+```
+Cotabby.app/Contents/Resources/shell-integration/cotabby.zsh
+Cotabby.app/Contents/Resources/shell-integration/cotabby.bash
 ```
 
 ### 7.4 — Installation instructions
@@ -644,7 +637,53 @@ Add an in-app panel or Settings section with copy-paste commands:
 brew install socat
 ```
 
-### 7.5 — Cursor positioning enhancement (optional)
+### 7.5 — Auto-inject hook into shell config (Phase 2 — future)
+
+Instead of requiring the user to manually edit `~/.zshrc`, Cotabby can
+auto-inject the source line when the user enables terminal integration in
+Settings. This is how iTerm2 and VS Code handle shell integration.
+
+**Approach:**
+
+1. When the user toggles "Terminal Integration" ON in Settings for the first
+   time, show a confirmation dialog:
+   > "Cotabby will add one line to your ~/.zshrc (and ~/.bashrc if bash is
+   > detected) to enable terminal autocomplete. You can remove it at any time."
+
+2. On confirmation, append to `~/.zshrc`:
+   ```zsh
+   # Added by Cotabby — terminal autocomplete shell integration
+   [[ -f "/Applications/Cotabby.app/Contents/Resources/shell-integration/cotabby.zsh" ]] && \
+     source "/Applications/Cotabby.app/Contents/Resources/shell-integration/cotabby.zsh"
+   ```
+
+3. Similarly for bash, append to `~/.bashrc` or `~/.bash_profile`.
+
+4. When the user toggles "Terminal Integration" OFF, offer to remove the line:
+   > "Remove the shell integration line from ~/.zshrc?"
+
+5. On removal, delete the Cotabby block (identified by the comment marker).
+
+**Implementation notes:**
+- Use a unique comment marker (`# Added by Cotabby`) to find and remove the block
+- Back up the file before modifying (`~/.zshrc.cotabby-backup`)
+- Handle edge cases: file doesn't exist, file is read-only, line already present
+- Support both `~/.zshrc` and `~/.zprofile` (some users use profile instead)
+- Show the exact line being added in the confirmation dialog for transparency
+
+**Files to modify:**
+- New: `Cotabby/Services/Terminal/ShellConfigInstaller.swift`
+- Modify: Settings UI terminal integration panel (add auto-install button)
+- Modify: `SuggestionSettingsModel.swift` (track whether auto-install was done)
+
+**Gate:**
+- [ ] Toggling ON adds the line to `~/.zshrc`
+- [ ] Toggling OFF removes the line
+- [ ] New terminal tabs auto-load the hook without manual `source`
+- [ ] Idempotent: toggling ON twice doesn't duplicate the line
+- [ ] Backup created before modification
+
+### 7.6 — Cursor positioning enhancement (optional)
 
 The shell hooks do not currently send `row`/`col`. Add cursor position
 estimation to the hooks:

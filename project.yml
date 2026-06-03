@@ -89,6 +89,12 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Cotabby
+    copyFiles:
+      - destination: resources
+        subpath: shell-integration
+        files:
+          - path: scripts/shell-integration/cotabby.zsh
+          - path: scripts/shell-integration/cotabby.bash
     dependencies:
       - package: Sparkle
         product: Sparkle
