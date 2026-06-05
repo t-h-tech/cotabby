@@ -687,7 +687,29 @@ extension WelcomeView {
     }
 
     fileprivate func resolvedPlan(for template: OnboardingTemplate) -> ResolvedTemplatePlan {
-        OnboardingTemplateRecommender.resolvePlan(for: template, engine: selectedEngine)
+        let base = OnboardingTemplateRecommender.resolvePlan(for: template, engine: selectedEngine)
+        // Returning users picking Custom on the OSS engine see their currently selected local model
+        // in the footer instead of the static template default, so the card matches the settings
+        // we will actually preserve in applyTemplate.
+        guard
+            template == .custom,
+            isReturningUser,
+            selectedEngine == .llamaOpenSource,
+            let currentFilename = runtimeModel.selectedModelFilename,
+            currentFilename != base.modelToDownload?.filename,
+            let currentModel = RuntimeModelCatalog.downloadableModels.first(where: { $0.filename == currentFilename })
+        else {
+            return base
+        }
+        return ResolvedTemplatePlan(
+            template: base.template,
+            engine: base.engine,
+            modelToDownload: currentModel,
+            wordCountPreset: base.wordCountPreset,
+            enablesFastMode: base.enablesFastMode,
+            enablesMultiLine: base.enablesMultiLine,
+            enablesClipboardContext: base.enablesClipboardContext
+        )
     }
 
     /// Switches the engine. Re-applies the already-selected tier under the new engine so the

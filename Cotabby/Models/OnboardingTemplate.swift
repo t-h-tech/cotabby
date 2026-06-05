@@ -45,7 +45,7 @@ enum OnboardingTemplate: String, CaseIterable, Identifiable, Equatable, Sendable
         case .powerful:
             return "Highest quality"
         case .custom:
-            return "Set it up yourself"
+            return "Keep your settings, or start from defaults"
         }
     }
 
@@ -61,7 +61,7 @@ enum OnboardingTemplate: String, CaseIterable, Identifiable, Equatable, Sendable
         case .powerful:
             return "Longer suggestions and higher quality on harder prompts."
         case .custom:
-            return "Start with Cotabby's lean defaults, then fine-tune length, model, and behavior in Settings."
+            return "Returning users keep every setting they've already tuned. New users start from Cotabby's lean defaults and fine-tune length, model, and behavior in Settings."
         }
     }
 

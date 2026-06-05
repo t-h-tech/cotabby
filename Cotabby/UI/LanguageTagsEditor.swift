@@ -39,7 +39,10 @@ struct LanguageTagsEditor: View {
             if !languages.isEmpty {
                 TagFlowLayout(spacing: 10) {
                     ForEach(languages, id: \.self) { language in
+                        // Block removing the last language so the user can never reach an empty set.
+                        // An empty list would leave the model with no target language to write in.
                         RemovableTagChip(text: language) {
+                            guard languages.count > 1 else { return }
                             suggestionSettings.removeLanguage(language)
                         }
                     }

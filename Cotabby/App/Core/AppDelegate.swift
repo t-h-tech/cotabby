@@ -140,15 +140,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CotabbyLogger.app.info("All services started")
     }
 
-    /// One-time default: enable Open at Login the first time the app starts so new users get the
-    /// menu bar app on every login without opening Settings. The flag key persists the decision so
-    /// later opt-outs are not overridden on subsequent launches.
+    /// One-time default: enable Open at Login the first time a brand-new install starts so new
+    /// users get the menu bar app on every login without opening Settings. Gated on the absence of
+    /// any onboarding-completion record so existing users who explicitly turned this off are not
+    /// re-enabled on upgrade. The applied-flag persists the decision so even fresh users who opt
+    /// out later are not overridden on subsequent launches.
     private func applyLaunchAtLoginDefaultIfNeeded() {
-        let key = "cotabbyLaunchAtLoginDefaultApplied"
+        let appliedKey = "cotabbyLaunchAtLoginDefaultApplied"
+        let onboardingVersionKey = "cotabbyOnboardingCompletedVersion"
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: key) else { return }
+        guard !defaults.bool(forKey: appliedKey) else { return }
+        // Treat any prior completed onboarding as "existing user" and skip the default so a
+        // deliberate off setting is preserved across upgrades.
+        guard defaults.integer(forKey: onboardingVersionKey) == 0 else {
+            defaults.set(true, forKey: appliedKey)
+            return
+        }
         LaunchAtLogin.isEnabled = true
-        defaults.set(true, forKey: key)
+        defaults.set(true, forKey: appliedKey)
         CotabbyLogger.app.info("Applied default Open at Login = true on first launch")
     }
 
