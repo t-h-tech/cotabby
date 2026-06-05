@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import LaunchAtLogin
 import Logging
 
 /// File overview:
@@ -126,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
         CotabbyLogger.app.info("Cotabby \(version) (build \(build)) launching on macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        applyLaunchAtLoginDefaultIfNeeded()
         startRuntimeIfPreferredEngineRequiresIt()
         focusModel.start()
         inputMonitor.start()
@@ -136,6 +138,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         welcomeCoordinator.presentPermissionReminderIfNeeded()
         didStartServices = true
         CotabbyLogger.app.info("All services started")
+    }
+
+    /// One-time default: enable Open at Login the first time the app starts so new users get the
+    /// menu bar app on every login without opening Settings. The flag key persists the decision so
+    /// later opt-outs are not overridden on subsequent launches.
+    private func applyLaunchAtLoginDefaultIfNeeded() {
+        let key = "cotabbyLaunchAtLoginDefaultApplied"
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: key) else { return }
+        LaunchAtLogin.isEnabled = true
+        defaults.set(true, forKey: key)
+        CotabbyLogger.app.info("Applied default Open at Login = true on first launch")
     }
 
     /// Synchronously releases native runtime resources before AppKit calls `exit()`.
