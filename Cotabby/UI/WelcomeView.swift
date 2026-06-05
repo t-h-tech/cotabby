@@ -217,7 +217,8 @@ extension WelcomeView {
         case .aboutYou:
             WelcomeNavigation(
                 canGoBack: true,
-                canContinue: true,
+                canContinue: !suggestionSettings.responseLanguages.isEmpty,
+                disabledHint: "Add at least one language so Cotabby knows what to write in.",
                 onBack: { step = .template },
                 // Skip the writing-style (custom rules) step when that feature is gated off.
                 onContinue: { step = CustomRulesCatalog.isUserFacingEnabled ? .writingStyle : .keybind }
@@ -343,7 +344,7 @@ extension WelcomeView {
                 Text("Tell Cotabby about yourself")
                     .font(.system(size: 24, weight: .semibold, design: .rounded))
 
-                Text("This personalizes your suggestions. Everything here is optional.")
+                Text("Pick at least one language so Cotabby knows what to write in. Your name is optional.")
                     .font(.system(size: 14, design: .rounded))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
