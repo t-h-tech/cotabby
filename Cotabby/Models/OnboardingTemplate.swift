@@ -100,13 +100,13 @@ enum OnboardingTemplate: String, CaseIterable, Identifiable, Equatable, Sendable
     /// they have chosen that tradeoff in General.
     var enablesMultiLine: Bool { false }
 
-    /// Quick and Custom stay lean by skipping the per-keystroke clipboard read and the extra prompt
-    /// bytes it adds; Everyday and Powerful pay that small cost for the extra signal.
+    /// Quick stays lean by skipping the per-keystroke clipboard read and the extra prompt bytes it
+    /// adds; Everyday, Powerful, and Custom pay that small cost for the extra signal.
     var enablesClipboardContext: Bool {
         switch self {
-        case .quick, .custom:
+        case .quick:
             return false
-        case .everyday, .powerful:
+        case .everyday, .powerful, .custom:
             return true
         }
     }
