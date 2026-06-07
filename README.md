@@ -15,7 +15,11 @@
   
 
 <a href="https://github.com/FuJacob/cotabby/releases/latest/download/Cotabby.dmg">
-<img width="200" alt="download" src="https://github.com/user-attachments/assets/d5cb4454-d2ab-41d3-9d36-171d44ebfc52" />
+<img width="200" alt="download" src="https://github.com/user-attachments/assets/d5cb4454-d2ab-41d3-9d36-171d44ebfc52" /></a>
+
+
+<a href="https://ko-fi.com/I2F22066MI" target="_blank">
+<img width="200" alt="support" src=".github/assets/readme/support-cotabby.png" />
 </a></p>
 
 <p align="center">
@@ -31,10 +35,6 @@
 
 <p align="center">
   <sub>Cotabby is free and open-source - maintained by two students. If it's useful to you, please consider supporting Cotabby's future.</sub>
-</p>
-
-<p align="center">
-  <a href='https://ko-fi.com/I2F22066MI' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 </p>
 
 ---
