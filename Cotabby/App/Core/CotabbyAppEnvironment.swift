@@ -20,6 +20,7 @@ final class CotabbyAppEnvironment {
     let permissionGuidanceController: PermissionGuidanceController
     let suggestionSettings: SuggestionSettingsModel
     let foundationModelAvailabilityService: FoundationModelAvailabilityService
+    let powerSourceMonitor: PowerSourceMonitor
     let clipboardContextProvider: ClipboardContextProvider
     let suggestionCoordinator: SuggestionCoordinator
     /// Shared with the Advanced settings pane so the user can fire an ad-hoc generation against
@@ -52,6 +53,7 @@ final class CotabbyAppEnvironment {
         let modelDownloadManager = ModelDownloadManager()
         let suggestionSettings = SuggestionSettingsModel(configuration: configuration)
         let foundationModelAvailabilityService = FoundationModelAvailabilityService()
+        let powerSourceMonitor = PowerSourceMonitor()
         let suppressionController = InputSuppressionController()
         let inputMonitor = InputMonitor(
             permissionProvider: { permissionManager.inputMonitoringGranted },
@@ -248,6 +250,7 @@ final class CotabbyAppEnvironment {
         self.permissionGuidanceController = permissionGuidanceController
         self.suggestionSettings = suggestionSettings
         self.foundationModelAvailabilityService = foundationModelAvailabilityService
+        self.powerSourceMonitor = powerSourceMonitor
         self.clipboardContextProvider = clipboardContextProvider
         self.suggestionCoordinator = suggestionCoordinator
         self.suggestionEngine = suggestionEngine
@@ -282,6 +285,56 @@ final class CotabbyAppEnvironment {
             .removeDuplicates()
             .sink { [weak inputMonitor] _ in
                 inputMonitor?.refreshToggleTap()
+            }
+            .store(in: &cancellables)
+
+        observePowerSourceModelSwitching(
+            powerSourceMonitor: powerSourceMonitor,
+            runtimeModel: runtimeModel,
+            suggestionSettings: suggestionSettings
+        )
+    }
+
+    /// Switches the runtime model when the power source changes, if the user opted into power-based
+    /// switching. The guards bail early when the feature is off, the target model is unset or no
+    /// longer installed, or it is already selected, so the only side effect is a deliberate reload on
+    /// a genuine power transition. Extracted from `init` to keep the initializer's complexity bounded.
+    private func observePowerSourceModelSwitching(
+        powerSourceMonitor: PowerSourceMonitor,
+        runtimeModel: RuntimeBootstrapModel,
+        suggestionSettings: SuggestionSettingsModel
+    ) {
+        powerSourceMonitor.$isPluggedIn
+            .removeDuplicates()
+            .sink { [weak runtimeModel, weak suggestionSettings] isPluggedIn in
+                guard let runtimeModel,
+                      let suggestionSettings else {
+                    return
+                }
+
+                guard suggestionSettings.isPowerBasedModelSwitchingEnabled else {
+                    return
+                }
+
+                let filename = isPluggedIn
+                    ? suggestionSettings.pluggedInModelFilename
+                    : suggestionSettings.batteryModelFilename
+
+                guard !filename.isEmpty else {
+                    return
+                }
+
+                guard runtimeModel.availableModels.contains(where: { $0.filename == filename }) else {
+                    return
+                }
+
+                guard runtimeModel.selectedModelFilename != filename else {
+                    return
+                }
+
+                Task {
+                    await runtimeModel.selectModel(filename)
+                }
             }
             .store(in: &cancellables)
     }
