@@ -59,6 +59,10 @@ final class SuggestionSettingsModel: ObservableObject {
     /// When on (and `suppressCompletionsOnTypo` is also on), a misspelled current word is offered a
     /// green spell-checker correction the user can accept to replace the typo.
     @Published private(set) var offerTypoCorrections: Bool
+    /// Bundled SymSpell languages eligible for frequency-ranked corrections. This remains separate
+    /// from response languages because model prompting and deterministic autocorrection are distinct
+    /// user policies.
+    @Published private(set) var enabledSpellingDictionaryCodes: [String]
     /// When on (and typo suppression is on), pressing Space after a misspelled word applies the best
     /// local correction immediately. Kept opt-in because this changes text without confirmation.
     @Published private(set) var automaticallyFixTypos: Bool
@@ -155,6 +159,7 @@ final class SuggestionSettingsModel: ObservableObject {
         isFastModeEnabled = data.isFastModeEnabled
         suppressCompletionsOnTypo = data.suppressCompletionsOnTypo
         offerTypoCorrections = data.offerTypoCorrections
+        enabledSpellingDictionaryCodes = data.enabledSpellingDictionaryCodes
         automaticallyFixTypos = data.automaticallyFixTypos
         isPerformanceTrackingEnabled = data.isPerformanceTrackingEnabled
         isMenuBarWordCountVisible = data.isMenuBarWordCountVisible
@@ -218,6 +223,7 @@ final class SuggestionSettingsModel: ObservableObject {
             acceptanceGranularity: acceptanceGranularity,
             suppressCompletionsOnTypo: suppressCompletionsOnTypo,
             offerTypoCorrections: offerTypoCorrections,
+            enabledSpellingDictionaryCodes: enabledSpellingDictionaryCodes,
             automaticallyFixTypos: automaticallyFixTypos
         )
     }
@@ -387,6 +393,27 @@ final class SuggestionSettingsModel: ObservableObject {
 
         offerTypoCorrections = enabled
         store.saveOfferTypoCorrections(enabled)
+    }
+
+    func setSpellingDictionary(_ language: SpellingDictionaryLanguage, enabled: Bool) {
+        var selected = Set(enabledSpellingDictionaryCodes)
+        if enabled {
+            selected.insert(language.rawValue)
+        } else {
+            selected.remove(language.rawValue)
+        }
+
+        let normalized = SpellingDictionaryCatalog.normalize(Array(selected))
+        guard enabledSpellingDictionaryCodes != normalized else {
+            return
+        }
+
+        enabledSpellingDictionaryCodes = normalized
+        store.saveEnabledSpellingDictionaryCodes(normalized)
+    }
+
+    func isSpellingDictionaryEnabled(_ language: SpellingDictionaryLanguage) -> Bool {
+        enabledSpellingDictionaryCodes.contains(language.rawValue)
     }
 
     func setAutomaticallyFixTypos(_ enabled: Bool) {
@@ -870,7 +897,14 @@ extension SuggestionSettingsModel: SuggestionSettingsProviding {
                     $automaticallyFixTypos
                 )
             ),
-            Publishers.CombineLatest3($userName, $customRules, $responseLanguages),
+            // Profile and language policy travel together because both affect a request/correction
+            // without changing presentation or timing.
+            Publishers.CombineLatest4(
+                $userName,
+                $customRules,
+                $responseLanguages,
+                $enabledSpellingDictionaryCodes
+            ),
             Publishers.CombineLatest4(
                 $debounceMilliseconds,
                 $focusPollIntervalMilliseconds,
@@ -893,7 +927,7 @@ extension SuggestionSettingsModel: SuggestionSettingsProviding {
                 let (globallyEnabled, disabledAppRules, engine, wordCountPreset) = combinedSettings
                 let (clipboardContextEnabled, fastModeEnabled, mirrorPreference, typoToggles) = presentationToggles
                 let (suppressOnTypo, offerCorrections, automaticallyFixTypos) = typoToggles
-                let (userName, customRules, responseLanguages) = profile
+                let (userName, customRules, responseLanguages, enabledSpellingDictionaryCodes) = profile
                 let (debounce, focusPoll, multiLine, autoAcceptPunctuation) = timing
                 let (isCustomActive, customLow, customHigh) = customRangeTuple
                 return SuggestionSettingsSnapshot(
@@ -917,6 +951,7 @@ extension SuggestionSettingsModel: SuggestionSettingsProviding {
                     acceptanceGranularity: granularity,
                     suppressCompletionsOnTypo: suppressOnTypo,
                     offerTypoCorrections: offerCorrections,
+                    enabledSpellingDictionaryCodes: enabledSpellingDictionaryCodes,
                     automaticallyFixTypos: automaticallyFixTypos
                 )
             }

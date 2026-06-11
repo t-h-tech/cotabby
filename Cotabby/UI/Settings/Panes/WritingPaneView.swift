@@ -68,6 +68,10 @@ struct WritingPaneView: View {
                     )
                 }
                 .disabled(!suggestionSettings.suppressCompletionsOnTypo)
+
+                Divider()
+
+                SpellingDictionaryPicker(suggestionSettings: suggestionSettings)
             }
 
             Section("Profile") {

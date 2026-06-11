@@ -124,6 +124,9 @@ struct SuggestionSettingsSnapshot: Equatable, Sendable {
     /// When true (and `suppressCompletionsOnTypo` is also true), a detected typo is offered a native
     /// spell-checker correction instead of being silently suppressed. No effect when suppression is off.
     let offerTypoCorrections: Bool
+    /// Normalized ISO codes for the bundled SymSpell dictionaries eligible for correction ranking.
+    /// Language routing chooses at most one per typo; an empty array uses only `NSSpellChecker`.
+    let enabledSpellingDictionaryCodes: [String]
     /// When true (and typo suppression is on), a correction is applied automatically after the user
     /// commits the misspelled word with Space. The word boundary prevents pauses in unfinished words
     /// from triggering destructive edits.

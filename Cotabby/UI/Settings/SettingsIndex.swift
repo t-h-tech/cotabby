@@ -37,6 +37,7 @@ enum SettingsItem: String, CaseIterable, Identifiable {
     case customRules
     case hideSuggestionsOnTypo
     case offerTypoCorrections
+    case spellingDictionaries
     case automaticallyFixTypos
     // Context
     case extendedContext
@@ -103,6 +104,7 @@ enum SettingsItem: String, CaseIterable, Identifiable {
         case .customRules: return "Custom Rules"
         case .hideSuggestionsOnTypo: return "Hide Suggestions on Typo"
         case .offerTypoCorrections: return "Offer Corrections on Typo"
+        case .spellingDictionaries: return "Spelling Dictionaries"
         case .automaticallyFixTypos: return "Automatically Fix Typos"
         case .extendedContext: return "Extended Context"
         case .contextLivePreview: return "Live Preview"
@@ -162,6 +164,7 @@ enum SettingsItem: String, CaseIterable, Identifiable {
         case .customRules: return "list.bullet.rectangle"
         case .hideSuggestionsOnTypo: return "eye.slash"
         case .offerTypoCorrections: return "checkmark.bubble"
+        case .spellingDictionaries: return "character.book.closed"
         case .automaticallyFixTypos: return "checkmark.circle"
         case .extendedContext: return "doc.text"
         case .contextLivePreview: return "text.cursor"
@@ -206,7 +209,7 @@ enum SettingsItem: String, CaseIterable, Identifiable {
         case .emojiPicker, .emojiSkinTone, .emojiPeopleStyle, .emojiHistory:
             return .emoji
         case .length, .name, .languages, .customRules,
-             .hideSuggestionsOnTypo, .offerTypoCorrections, .automaticallyFixTypos:
+             .hideSuggestionsOnTypo, .offerTypoCorrections, .spellingDictionaries, .automaticallyFixTypos:
             return .writing
         case .extendedContext, .contextLivePreview:
             return .context
@@ -303,6 +306,10 @@ enum SettingsItem: String, CaseIterable, Identifiable {
         case .offerTypoCorrections:
             return ["typo", "correct", "correction", "fix", "spelling", "autocorrect",
                     "spell check", "mistake", "rewrite"]
+        case .spellingDictionaries:
+            return ["dictionary", "dictionaries", "spelling", "language", "multilingual",
+                    "english", "german", "spanish", "french", "hebrew", "italian",
+                    "russian", "symspell", "autocorrect"]
         case .automaticallyFixTypos:
             return ["typo", "automatic", "automatically", "autocorrect", "fix", "spelling",
                     "replace", "space", "instant", "without accepting"]

@@ -84,6 +84,7 @@ struct SuggestionSettingsStore {
     private static let fastModeEnabledDefaultsKey = "cotabbyFastModeEnabled"
     private static let suppressCompletionsOnTypoDefaultsKey = "cotabbySuppressCompletionsOnTypo"
     private static let offerTypoCorrectionsDefaultsKey = "cotabbyOfferTypoCorrections"
+    private static let spellingDictionaryCodesDefaultsKey = "cotabbyEnabledSpellingDictionaryCodes"
     private static let automaticallyFixTyposDefaultsKey = "cotabbyAutomaticallyFixTypos"
     private static let performanceTrackingEnabledDefaultsKey = "cotabbyPerformanceTrackingEnabled"
     private static let menuBarWordCountVisibleDefaultsKey = "cotabbyMenuBarWordCountVisible"
@@ -187,6 +188,14 @@ struct SuggestionSettingsStore {
             userDefaults.object(forKey: Self.suppressCompletionsOnTypoDefaultsKey) as? Bool ?? true
         let resolvedOfferTypoCorrections =
             userDefaults.object(forKey: Self.offerTypoCorrectionsDefaultsKey) as? Bool ?? true
+        let resolvedEnabledSpellingDictionaryCodes: [String] = {
+            guard userDefaults.object(forKey: Self.spellingDictionaryCodesDefaultsKey) != nil else {
+                return SpellingDictionaryCatalog.defaultEnabledCodes
+            }
+            return SpellingDictionaryCatalog.normalize(
+                userDefaults.stringArray(forKey: Self.spellingDictionaryCodesDefaultsKey) ?? []
+            )
+        }()
         let resolvedAutomaticallyFixTypos =
             userDefaults.object(forKey: Self.automaticallyFixTyposDefaultsKey) as? Bool ?? false
         // Defaults to false so the metrics ring buffer stays empty until the user explicitly opts
@@ -334,6 +343,7 @@ struct SuggestionSettingsStore {
             isFastModeEnabled: resolvedFastModeEnabled,
             suppressCompletionsOnTypo: resolvedSuppressCompletionsOnTypo,
             offerTypoCorrections: resolvedOfferTypoCorrections,
+            enabledSpellingDictionaryCodes: resolvedEnabledSpellingDictionaryCodes,
             automaticallyFixTypos: resolvedAutomaticallyFixTypos,
             isPerformanceTrackingEnabled: resolvedPerformanceTrackingEnabled,
             isMenuBarWordCountVisible: resolvedMenuBarWordCountVisible,
@@ -384,6 +394,7 @@ struct SuggestionSettingsStore {
         saveFastModeEnabled(data.isFastModeEnabled)
         saveSuppressCompletionsOnTypo(data.suppressCompletionsOnTypo)
         saveOfferTypoCorrections(data.offerTypoCorrections)
+        saveEnabledSpellingDictionaryCodes(data.enabledSpellingDictionaryCodes)
         saveAutomaticallyFixTypos(data.automaticallyFixTypos)
         savePerformanceTrackingEnabled(data.isPerformanceTrackingEnabled)
         saveMenuBarWordCountVisible(data.isMenuBarWordCountVisible)
@@ -524,6 +535,13 @@ struct SuggestionSettingsStore {
 
     func saveOfferTypoCorrections(_ enabled: Bool) {
         userDefaults.set(enabled, forKey: Self.offerTypoCorrectionsDefaultsKey)
+    }
+
+    func saveEnabledSpellingDictionaryCodes(_ codes: [String]) {
+        userDefaults.set(
+            SpellingDictionaryCatalog.normalize(codes),
+            forKey: Self.spellingDictionaryCodesDefaultsKey
+        )
     }
 
     func saveAutomaticallyFixTypos(_ enabled: Bool) {
