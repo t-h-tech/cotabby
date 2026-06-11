@@ -21,11 +21,25 @@ struct CaretGeometryResult {
     /// the actual font instead of guessing with a system font fallback. Nil when no child
     /// frame data was available (e.g. BoundsForRange worked directly).
     let observedCharWidth: CGFloat?
+    /// Content edges measured from the same child text-run frames (see `ObservedContentEdges`).
+    /// Nil when no child frame data was available.
+    let observedContentEdges: ObservedContentEdges?
+    /// Extra source granularity for diagnostics (e.g. which caret-to-run mapping mode ran).
+    /// Surfaces in the debug caret badge and the structured logs via the caret source label.
+    let sourceDetail: String?
 
-    init(rect: CGRect, quality: CaretGeometryQuality, observedCharWidth: CGFloat? = nil) {
+    init(
+        rect: CGRect,
+        quality: CaretGeometryQuality,
+        observedCharWidth: CGFloat? = nil,
+        observedContentEdges: ObservedContentEdges? = nil,
+        sourceDetail: String? = nil
+    ) {
         self.rect = rect
         self.quality = quality
         self.observedCharWidth = observedCharWidth
+        self.observedContentEdges = observedContentEdges
+        self.sourceDetail = sourceDetail
     }
 }
 
@@ -219,35 +233,242 @@ struct AXTextGeometryResolver {
         }
         let charWidth: CGFloat? = totalChars > 0 ? totalWidth / CGFloat(totalChars) : nil
 
-        // Find which child contains the caret by matching parent selection against cumulative
-        // text lengths. AX selections use UTF-16 offsets, so we match on NSString length.
-        let caretOffset = parentSelection.location
-        var cumulative = 0
-        for run in textRuns {
-            let runLen = (run.text as NSString).length
-            if caretOffset <= cumulative + runLen {
-                let localOffset = caretOffset - cumulative
-                let fraction = runLen > 0 ? CGFloat(localOffset) / CGFloat(runLen) : 1.0
-                let cocoaFrame = AXHelper.cocoaRect(fromAccessibilityRect: run.frame)
-                let caretX = cocoaFrame.minX + fraction * cocoaFrame.width
-                return CaretGeometryResult(
-                    rect: CGRect(
-                        x: caretX, y: cocoaFrame.minY, width: 2, height: cocoaFrame.height),
-                    quality: .derived,
-                    observedCharWidth: charWidth
-                )
-            }
-            cumulative += runLen
+        // Measure the content edges from the same frames: the leftmost run's leading edge and the
+        // topmost run's top edge reveal the field's real padding, which `AXFrame` hides. The caret
+        // layout estimator anchors to these instead of guessed insets.
+        let cocoaRunFrames = textRuns.map { AXHelper.cocoaRect(fromAccessibilityRect: $0.frame) }
+        let contentEdges: ObservedContentEdges?
+        if let leftX = cocoaRunFrames.map(\.minX).min(),
+            let topY = cocoaRunFrames.map(\.maxY).max() {
+            contentEdges = ObservedContentEdges(leftX: leftX, topY: topY)
+        } else {
+            contentEdges = nil
         }
 
-        // Caret is past all children (e.g. newline not included in child text).
-        // Use the last child's trailing edge.
-        let lastFrame = AXHelper.cocoaRect(fromAccessibilityRect: textRuns.last!.frame)
+        // Map the caret offset to a run by aligning run texts inside the parent value (see
+        // `caretRunPlacement`). The run frame's Y is a real rendered line position, so a correct
+        // run choice is what makes derived geometry trustworthy vertically.
+        guard let placement = Self.caretRunPlacement(
+            runTexts: textRuns.map(\.text),
+            parentText: parentText,
+            caretOffset: parentSelection.location
+        ) else {
+            return nil
+        }
+
+        let runFrame = cocoaRunFrames[placement.runIndex]
+        let caretX = runFrame.minX + placement.fraction * runFrame.width
         return CaretGeometryResult(
-            rect: CGRect(x: lastFrame.maxX, y: lastFrame.minY, width: 2, height: lastFrame.height),
+            rect: CGRect(x: caretX, y: runFrame.minY, width: 2, height: runFrame.height),
             quality: .derived,
-            observedCharWidth: charWidth
+            observedCharWidth: charWidth,
+            observedContentEdges: contentEdges,
+            sourceDetail: placement.mode.rawValue
         )
+    }
+
+    /// Where the caret landed among the child text runs.
+    ///
+    /// Mapping is text-alignment based: each run's text is located inside the parent value, and
+    /// the caret offset (a parent-value coordinate) is tested against the matched ranges. The
+    /// previous cumulative-length mapping silently assumed the parent value is the run texts
+    /// concatenated with nothing in between; Chromium editors separate blocks with newlines the
+    /// runs do not contain, so every line break before the caret dragged the mapping one character
+    /// deeper — several paragraphs in, the caret landed whole visual lines below its real run.
+    ///
+    /// Real captured values forced three hardenings beyond plain sequential search:
+    ///   - Whitespace variants: hosts mix non-breaking and plain spaces between the parent value
+    ///     and run texts, so matching runs on a length-preserving normalized form.
+    ///   - Word-boundary anchoring: flattened values can fuse adjacent blocks with no separator at
+    ///     all ("i'm"+"hi" → "i'mhi"), so a short run like "hi" must not match inside a fused
+    ///     clump it does not belong to. Pass one only accepts boundary-clean matches.
+    ///   - Gap fill: runs rejected by the boundary rule (their real occurrence IS fused) are
+    ///     re-searched in pass two, constrained between their already-anchored neighbors, where a
+    ///     non-boundary match cannot land in the wrong region.
+    enum CaretRunMappingMode: String, Equatable {
+        /// Every run anchored inside the parent value.
+        case aligned = "runs-aligned"
+        /// Some runs could not be anchored and were skipped; the caret mapped against the rest.
+        case partiallyAligned = "runs-partial"
+        /// No run could be anchored; fell back to the legacy cumulative-length walk.
+        case legacyCumulative = "runs-legacy"
+    }
+
+    struct CaretRunPlacement: Equatable {
+        let runIndex: Int
+        /// Position inside the run: 0 is the leading edge, 1 the trailing edge.
+        let fraction: CGFloat
+        let mode: CaretRunMappingMode
+    }
+
+    /// Internal (not private) so the mapping math is unit-testable without live AX elements.
+    static func caretRunPlacement(
+        runTexts: [String],
+        parentText: String,
+        caretOffset: Int
+    ) -> CaretRunPlacement? {
+        guard !runTexts.isEmpty else {
+            return nil
+        }
+        let parent = normalizedForMatching(parentText) as NSString
+        let normalizedRuns = runTexts.map(normalizedForMatching)
+        let caret = min(max(caretOffset, 0), parent.length)
+
+        let anchored = anchoredRunRanges(normalizedRuns: normalizedRuns, parent: parent)
+        guard !anchored.isEmpty else {
+            return legacyCumulativePlacement(runTexts: runTexts, caretOffset: caret)
+        }
+        let mode: CaretRunMappingMode = anchored.count == runTexts.count
+            ? .aligned
+            : .partiallyAligned
+        return placementAmongAnchors(anchored, caret: caret, mode: mode)
+    }
+
+    /// Anchors each run's text inside the parent value. Pass one accepts only boundary-clean
+    /// matches, in order. Pass two retries the rejected runs with a plain search, but only inside
+    /// the window between their nearest anchored neighbors, where a fused match cannot land in the
+    /// wrong region. Returns the anchored (runIndex, range) pairs in document order.
+    private static func anchoredRunRanges(
+        normalizedRuns: [String],
+        parent: NSString
+    ) -> [(runIndex: Int, range: NSRange)] {
+        var matchedRanges = [NSRange?](repeating: nil, count: normalizedRuns.count)
+
+        var searchLocation = 0
+        for (index, text) in normalizedRuns.enumerated() where !text.isEmpty {
+            let found = boundaryCleanRange(of: text as NSString, in: parent, from: searchLocation)
+            if found.location != NSNotFound {
+                matchedRanges[index] = found
+                searchLocation = found.location + found.length
+            }
+        }
+
+        var lowerBound = 0
+        for (index, text) in normalizedRuns.enumerated() {
+            if let matched = matchedRanges[index] {
+                lowerBound = matched.location + matched.length
+                continue
+            }
+            let upperBound = matchedRanges[(index + 1)...]
+                .compactMap { $0 }
+                .first?.location ?? parent.length
+            guard !text.isEmpty, upperBound > lowerBound else {
+                continue
+            }
+            let window = NSRange(location: lowerBound, length: upperBound - lowerBound)
+            let found = parent.range(of: text, options: [], range: window)
+            if found.location != NSNotFound {
+                matchedRanges[index] = found
+                lowerBound = found.location + found.length
+            }
+        }
+
+        return matchedRanges.enumerated().compactMap { index, range in
+            range.map { (index, $0) }
+        }
+    }
+
+    /// Maps the caret offset onto the anchored runs: inside a range is proportional, inside a
+    /// separator gap snaps to the nearest rendered edge (a line break or a blank line the runs
+    /// cannot represent — either choice is at most one line from the truth, which text alone
+    /// cannot resolve), and beyond every anchor lands on the last run's trailing edge.
+    private static func placementAmongAnchors(
+        _ anchored: [(runIndex: Int, range: NSRange)],
+        caret: Int,
+        mode: CaretRunMappingMode
+    ) -> CaretRunPlacement {
+        for (position, entry) in anchored.enumerated() {
+            if caret < entry.range.location {
+                if position > 0 {
+                    let previous = anchored[position - 1]
+                    let previousEnd = previous.range.location + previous.range.length
+                    if caret - previousEnd <= entry.range.location - caret {
+                        return CaretRunPlacement(runIndex: previous.runIndex, fraction: 1, mode: mode)
+                    }
+                }
+                return CaretRunPlacement(runIndex: entry.runIndex, fraction: 0, mode: mode)
+            }
+            if caret <= entry.range.location + entry.range.length {
+                let fraction = entry.range.length > 0
+                    ? CGFloat(caret - entry.range.location) / CGFloat(entry.range.length)
+                    : 1
+                return CaretRunPlacement(runIndex: entry.runIndex, fraction: fraction, mode: mode)
+            }
+        }
+
+        return CaretRunPlacement(
+            runIndex: anchored[anchored.count - 1].runIndex,
+            fraction: 1,
+            mode: mode
+        )
+    }
+
+    /// Maps non-breaking space variants to a plain space so matching survives hosts that mix the
+    /// two between the parent value and run texts. Every replacement is a single UTF-16 unit for a
+    /// single UTF-16 unit, so matched ranges stay valid coordinates in the original string.
+    private static func normalizedForMatching(_ text: String) -> String {
+        String(text.map { character in
+            character == "\u{00A0}" || character == "\u{2007}" || character == "\u{202F}"
+                ? " "
+                : character
+        })
+    }
+
+    /// First occurrence of `needle` at or after `location` whose edges look like real token
+    /// boundaries. A match is boundary-clean on a side when either the needle's edge character or
+    /// the adjacent parent character is not alphanumeric — i.e. we only reject matches that would
+    /// split a longer alphanumeric clump, the signature of flattened block boundaries.
+    private static func boundaryCleanRange(
+        of needle: NSString,
+        in haystack: NSString,
+        from location: Int
+    ) -> NSRange {
+        var searchStart = location
+        while searchStart < haystack.length {
+            let remaining = NSRange(location: searchStart, length: haystack.length - searchStart)
+            let found = haystack.range(of: needle as String, options: [], range: remaining)
+            guard found.location != NSNotFound else {
+                return found
+            }
+            let cleanBefore = found.location == 0
+                || !isAlphanumeric(haystack.character(at: found.location - 1))
+                || !isAlphanumeric(needle.character(at: 0))
+            let endIndex = found.location + found.length
+            let cleanAfter = endIndex >= haystack.length
+                || !isAlphanumeric(haystack.character(at: endIndex))
+                || !isAlphanumeric(needle.character(at: needle.length - 1))
+            if cleanBefore && cleanAfter {
+                return found
+            }
+            searchStart = found.location + 1
+        }
+        return NSRange(location: NSNotFound, length: 0)
+    }
+
+    /// UTF-16 unit classification for the boundary rule. Surrogate halves (emoji, rare CJK) are
+    /// treated as alphanumeric so a match never anchors mid-character.
+    private static func isAlphanumeric(_ unit: unichar) -> Bool {
+        guard let scalar = UnicodeScalar(unit) else {
+            return true
+        }
+        return CharacterSet.alphanumerics.contains(scalar)
+    }
+
+    private static func legacyCumulativePlacement(
+        runTexts: [String],
+        caretOffset: Int
+    ) -> CaretRunPlacement {
+        var cumulative = 0
+        for (index, text) in runTexts.enumerated() {
+            let length = (text as NSString).length
+            if caretOffset <= cumulative + length {
+                let local = caretOffset - cumulative
+                let fraction = length > 0 ? CGFloat(local) / CGFloat(length) : 1
+                return CaretRunPlacement(runIndex: index, fraction: fraction, mode: .legacyCumulative)
+            }
+            cumulative += length
+        }
+        return CaretRunPlacement(runIndex: runTexts.count - 1, fraction: 1, mode: .legacyCumulative)
     }
 
     /// Chromium-based editors sometimes nest text runs under intermediary wrappers (`AXGroup`,

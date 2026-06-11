@@ -467,11 +467,20 @@ final class InputMonitor {
             return Unmanaged.passUnretained(event)
 
         case .keyDown:
-            // Countdown first (it must consume its token), then identity as the backstop: a real
-            // keystroke racing in between `registerSyntheticInsertion` and our synthetic event's
-            // delivery eats the token, and the unsuppressed synthetic Cmd-V of the paste path then
-            // classifies as `.shortcutMutation` and tears down the very session it was committing.
-            if suppressionController.consumeIfNeeded() || suppressionController.isSynthetic(event) {
+            // Identity first: every event the inserter posts carries the synthetic marker, which
+            // survives any counter race. The countdown alone proved leaky under rapid accept
+            // bursts (async tap delivery interleaves chunks), and one leaked synthetic keydown
+            // classified as typing is enough to invalidate the very suggestion being accepted. This
+            // also subsumes the #668 paste-path concern: the synthetic Cmd-V carries the marker, so
+            // identity suppresses it even if a racing real keystroke consumed its countdown token
+            // first. The countdown check below remains as the secondary gate for unmarked events.
+            if suppressionController.isSynthetic(event) {
+                _ = suppressionController.consumeIfNeeded()
+                onSuppressedSyntheticInput?()
+                return Unmanaged.passUnretained(event)
+            }
+
+            if suppressionController.consumeIfNeeded() {
                 onSuppressedSyntheticInput?()
                 return Unmanaged.passUnretained(event)
             }

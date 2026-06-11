@@ -190,9 +190,16 @@ struct FocusedInputContext: Equatable, Sendable {
     let caretRect: CGRect
     let inputFrameRect: CGRect?
     let caretQuality: CaretGeometryQuality
+    /// Human-readable label of the geometry source that produced `caretRect` (e.g. "derived
+    /// primary"), carried through so presentation-time repair logs can attribute a misplaced
+    /// overlay to the exact resolver branch.
+    let caretSource: String
     /// Average character width in points observed from AX child frame measurements.
     /// Used by caret prediction after tab insertion to match the target app's actual font.
     let observedCharWidth: CGFloat?
+    /// Content edges measured from the host's child text-run frames, carried through so the caret
+    /// layout estimator can anchor to the field's real padding instead of guessed insets.
+    let observedContentEdges: ObservedContentEdges?
     let precedingText: String
     let trailingText: String
     let selection: NSRange
@@ -215,7 +222,9 @@ struct FocusedInputContext: Equatable, Sendable {
         caretRect = snapshot.caretRect
         inputFrameRect = snapshot.inputFrameRect
         caretQuality = snapshot.caretQuality
+        caretSource = snapshot.caretSource
         observedCharWidth = snapshot.observedCharWidth
+        observedContentEdges = snapshot.observedContentEdges
         precedingText = snapshot.precedingText
         trailingText = snapshot.trailingText
         selection = snapshot.selection

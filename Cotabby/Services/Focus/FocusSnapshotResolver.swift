@@ -20,7 +20,11 @@ struct FocusSnapshotResolver {
     /// a short trailing window for normalization. Keeping the focus snapshot bounded prevents a
     /// large editor buffer from flowing through equality checks, Combine publishes, and stale-result
     /// signatures on every AX refresh.
-    private static let focusedTextContextWindowUTF16 = 4096
+    ///
+    /// Internal (not private) so the caret layout repair can detect "the captured prefix filled the
+    /// window and may not start at the document start" — laying out a mid-document prefix would
+    /// produce meaningless wrap/Y geometry, so that case must be rejected.
+    static let focusedTextContextWindowUTF16 = 4096
 
     /// Carries deep-walk throttle state across the value-typed resolver's non-mutating polls.
     private let deepWalkThrottle = DeepGeometryWalkThrottle()
@@ -167,6 +171,8 @@ struct FocusSnapshotResolver {
             primaryRect: resolvedCandidate.caretRect,
             primaryQuality: resolvedCandidate.caretQuality,
             primaryObservedCharWidth: resolvedCandidate.observedCharWidth,
+            primaryObservedContentEdges: resolvedCandidate.observedContentEdges,
+            primarySourceDetail: resolvedCandidate.caretSourceDetail,
             deepResult: deepResult
         ) else {
             return FocusSnapshot(
@@ -181,6 +187,7 @@ struct FocusSnapshotResolver {
         let caretSource = caret.source
         let caretQuality = caret.quality
         let observedCharWidth = caret.observedCharWidth
+        let observedContentEdges = caret.observedContentEdges
 
         let contextWindow = boundedContextWindow(text: value, selection: selection)
         let nsValue = contextWindow.text as NSString
@@ -231,6 +238,7 @@ struct FocusSnapshotResolver {
             caretSource: caretSource,
             caretQuality: caretQuality,
             observedCharWidth: observedCharWidth,
+            observedContentEdges: observedContentEdges,
             precedingText: nsValue.substring(to: safeSelectionLocation),
             trailingText: nsValue.substring(from: trailingStart),
             selection: contextWindow.selection,
@@ -577,7 +585,10 @@ struct FocusSnapshotResolver {
         switch quality {
         case .exact:
             return 2
-        case .derived:
+        case .derived, .layoutEstimated:
+            // `.layoutEstimated` is unreachable here: it exists only as a presentation-time
+            // upgrade applied to overlay geometry, never as a resolver output. Scored alongside
+            // `.derived` purely to keep this switch exhaustive.
             return 1
         case .estimated:
             return 0
@@ -724,6 +735,8 @@ struct FocusSnapshotResolver {
             caretRect: caretRect,
             caretQuality: caretQuality,
             observedCharWidth: caretResult?.observedCharWidth,
+            observedContentEdges: caretResult?.observedContentEdges,
+            caretSourceDetail: caretResult?.sourceDetail,
             inputFrameRect: inputFrameRect,
             isSecure: isSecure,
             resolverCandidate: resolverCandidate
@@ -856,6 +869,8 @@ private struct AXFocusCandidate {
     let caretRect: CGRect?
     let caretQuality: CaretGeometryQuality?
     let observedCharWidth: CGFloat?
+    let observedContentEdges: ObservedContentEdges?
+    let caretSourceDetail: String?
     let inputFrameRect: CGRect?
     let isSecure: Bool
     let resolverCandidate: FocusCapabilityCandidate

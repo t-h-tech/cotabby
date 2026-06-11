@@ -26,6 +26,14 @@ nonisolated enum CaretGeometryQuality: Equatable, Sendable {
     case derived
     case estimated
 
+    /// Produced only at presentation time by `TextLayoutCaretEstimator`, never by the AX
+    /// resolvers: the caret was recomputed from a hidden text layout of the prefix anchored to
+    /// the field frame, after the resolver could offer nothing better than `.estimated`. Kept as
+    /// its own case (instead of reusing `.derived`, which means "measured from real AX child
+    /// frames") so caret-placement debugging in the logs stays honest about the source. Trusted
+    /// enough to render inline ghost text.
+    case layoutEstimated
+
     var label: String {
         switch self {
         case .exact:
@@ -34,6 +42,8 @@ nonisolated enum CaretGeometryQuality: Equatable, Sendable {
             return "derived"
         case .estimated:
             return "estimated"
+        case .layoutEstimated:
+            return "layout-estimated"
         }
     }
 }
@@ -124,6 +134,18 @@ struct ResolvedFieldStyle: Equatable, Sendable {
     }
 }
 
+/// Real content edges measured from the host's own AX child text-run frames (Gmail/Outlook-class
+/// editors). The field's `AXFrame` includes its padding, which AX never reports directly; the
+/// leftmost/topmost rendered text runs reveal where content actually starts. Used by the caret
+/// layout estimator instead of guessed insets, so its anchor matches the host's real padding.
+/// These are live per-field measurements, not per-app knowledge.
+nonisolated struct ObservedContentEdges: Equatable, Sendable {
+    /// Global Cocoa-coordinate X of the leftmost text run's leading edge.
+    let leftX: CGFloat
+    /// Global Cocoa-coordinate top edge (maxY) of the topmost text run.
+    let topY: CGFloat
+}
+
 /// This snapshot is the future handoff point into suggestion generation.
 /// We store enough information to understand text context and caret placement without generating yet.
 struct FocusedInputSnapshot: Equatable {
@@ -140,6 +162,9 @@ struct FocusedInputSnapshot: Equatable {
     /// Average character width in points observed from AX child frame measurements.
     /// Nil when the caret was resolved via BoundsForRange (no child walk needed).
     let observedCharWidth: CGFloat?
+    /// Content edges measured from the same child text-run walk that produces
+    /// `observedCharWidth`. Nil when no child runs were available.
+    let observedContentEdges: ObservedContentEdges?
     let precedingText: String
     let trailingText: String
     let selection: NSRange
@@ -193,6 +218,7 @@ struct FocusedInputSnapshot: Equatable {
         caretSource: String,
         caretQuality: CaretGeometryQuality,
         observedCharWidth: CGFloat?,
+        observedContentEdges: ObservedContentEdges? = nil,
         precedingText: String,
         trailingText: String,
         selection: NSRange,
@@ -213,6 +239,7 @@ struct FocusedInputSnapshot: Equatable {
         self.caretSource = caretSource
         self.caretQuality = caretQuality
         self.observedCharWidth = observedCharWidth
+        self.observedContentEdges = observedContentEdges
         self.precedingText = precedingText
         self.trailingText = trailingText
         self.selection = selection

@@ -20,6 +20,7 @@ enum CaretGeometrySelector {
         let source: String
         let quality: CaretGeometryQuality
         let observedCharWidth: CGFloat?
+        let observedContentEdges: ObservedContentEdges?
     }
 
     /// Whether the primary (focused-input) caret geometry is too weak to trust, so the resolver
@@ -56,34 +57,58 @@ enum CaretGeometrySelector {
         primaryRect: CGRect?,
         primaryQuality: CaretGeometryQuality?,
         primaryObservedCharWidth: CGFloat?,
+        primaryObservedContentEdges: ObservedContentEdges? = nil,
+        primarySourceDetail: String? = nil,
         deepResult: CaretGeometryResult?
     ) -> Selected? {
         if let primary = primaryRect, primaryQuality == .exact {
             return Selected(
-                rect: primary, source: "exact primary", quality: .exact,
-                observedCharWidth: primaryObservedCharWidth
+                rect: primary,
+                source: labeled("exact primary", detail: primarySourceDetail),
+                quality: .exact,
+                observedCharWidth: primaryObservedCharWidth,
+                observedContentEdges: primaryObservedContentEdges
             )
         }
         if let primary = primaryRect, primaryQuality == .derived {
             return Selected(
-                rect: primary, source: "derived primary", quality: .derived,
-                observedCharWidth: primaryObservedCharWidth
+                rect: primary,
+                source: labeled("derived primary", detail: primarySourceDetail),
+                quality: .derived,
+                observedCharWidth: primaryObservedCharWidth,
+                observedContentEdges: primaryObservedContentEdges
             )
         }
         if let deep = deepResult {
             return Selected(
-                rect: deep.rect, source: "\(deep.quality.label) deep", quality: deep.quality,
-                observedCharWidth: deep.observedCharWidth
+                rect: deep.rect,
+                source: labeled("\(deep.quality.label) deep", detail: deep.sourceDetail),
+                quality: deep.quality,
+                observedCharWidth: deep.observedCharWidth,
+                observedContentEdges: deep.observedContentEdges
             )
         }
         if let primary = primaryRect {
             return Selected(
                 rect: primary,
-                source: "\(primaryQuality?.label ?? "unknown") primary-fallback",
+                source: labeled(
+                    "\(primaryQuality?.label ?? "unknown") primary-fallback",
+                    detail: primarySourceDetail
+                ),
                 quality: primaryQuality ?? .estimated,
-                observedCharWidth: primaryObservedCharWidth
+                observedCharWidth: primaryObservedCharWidth,
+                observedContentEdges: primaryObservedContentEdges
             )
         }
         return nil
+    }
+
+    /// Appends resolver-supplied detail (e.g. the caret-to-run mapping mode) so the debug badge
+    /// and structured logs show not just which branch produced the rect but how it mapped.
+    private static func labeled(_ base: String, detail: String?) -> String {
+        guard let detail, !detail.isEmpty else {
+            return base
+        }
+        return "\(base) (\(detail))"
     }
 }
