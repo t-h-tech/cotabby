@@ -1,0 +1,12 @@
+// Template for your personal signing config.
+//
+// Setup (one time):
+//   1. cp LocalTeam.xcconfig.example LocalTeam.xcconfig
+//   2. Set DEVELOPMENT_TEAM below to your 10-character Apple Development Team id
+//      (Xcode ▸ Settings ▸ Accounts ▸ your team, or developer.apple.com → Membership).
+//   3. Build. LocalTeam.xcconfig is gitignored and pulled in via Local.xcconfig's optional
+//      #include, so your team id never lands in the tracked Cotabby.xcodeproj.
+//
+// Why this exists: project.yml deliberately does NOT hardcode a team, so Xcode's automatic
+// signing reads it from here instead of rewriting project.pbxproj on every build.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

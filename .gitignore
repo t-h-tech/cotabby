@@ -8,6 +8,10 @@ build/
 *.dSYM.zip
 *.dSYM
 
+# Per-developer signing: holds a personal Apple Development Team id, pulled in at build time by
+# the tracked, secret-free Local.xcconfig. Only this file is ignored; copy LocalTeam.xcconfig.example.
+LocalTeam.xcconfig
+
 # Swift Package Manager
 .build/
 .swiftpm/
