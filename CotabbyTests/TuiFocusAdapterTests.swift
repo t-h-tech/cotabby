@@ -19,9 +19,7 @@ final class TuiFocusAdapterTests: XCTestCase {
         )
         let snapshot = TuiFocusAdapter.adapt(
             reading: reading,
-            terminalBundleIdentifier: "com.mitchellh.ghostty",
-            terminalApplicationName: "Ghostty",
-            terminalPid: 4242,
+            terminal: .init(bundleIdentifier: "com.mitchellh.ghostty", applicationName: "Ghostty", pid: 4242),
             promptCaretRect: CGRect(x: 100, y: 200, width: 8, height: 16),
             inputFrameRect: nil,
             focusChangeSequence: 7
@@ -43,9 +41,7 @@ final class TuiFocusAdapterTests: XCTestCase {
         )
         let snapshot = TuiFocusAdapter.adapt(
             reading: reading,
-            terminalBundleIdentifier: "com.mitchellh.ghostty",
-            terminalApplicationName: "Ghostty",
-            terminalPid: 4242,
+            terminal: .init(bundleIdentifier: "com.mitchellh.ghostty", applicationName: "Ghostty", pid: 4242),
             promptCaretRect: .zero,
             inputFrameRect: nil,
             focusChangeSequence: 0
@@ -67,9 +63,7 @@ final class TuiFocusAdapterTests: XCTestCase {
         )
         let snapshot = TuiFocusAdapter.adapt(
             reading: reading,
-            terminalBundleIdentifier: "com.apple.Terminal",
-            terminalApplicationName: "Terminal",
-            terminalPid: 9999,
+            terminal: .init(bundleIdentifier: "com.apple.Terminal", applicationName: "Terminal", pid: 9999),
             promptCaretRect: .zero,
             inputFrameRect: nil,
             focusChangeSequence: 0
@@ -88,9 +82,7 @@ final class TuiFocusAdapterTests: XCTestCase {
         )
         let snapshot = TuiFocusAdapter.adapt(
             reading: reading,
-            terminalBundleIdentifier: "com.mitchellh.ghostty",
-            terminalApplicationName: "Ghostty",
-            terminalPid: 1,
+            terminal: .init(bundleIdentifier: "com.mitchellh.ghostty", applicationName: "Ghostty", pid: 1),
             promptCaretRect: .zero,
             inputFrameRect: nil,
             focusChangeSequence: 0

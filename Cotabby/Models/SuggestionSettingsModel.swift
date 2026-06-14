@@ -144,10 +144,10 @@ final class SuggestionSettingsModel: ObservableObject {
     private static let acceptanceGranularityDefaultsKey = "cotabbyAcceptanceGranularity"
     private static let terminalIntegrationEnabledDefaultsKey = "cotabbyTerminalIntegrationEnabled"
     private static let terminalAcceptanceKeyCodeDefaultsKey = "cotabbyTerminalAcceptanceKeyCode"
-    private static let terminalAcceptanceKeyModifiersDefaultsKey = "cotabbyTerminalAcceptanceKeyModifiers"
+    private static let terminalAcceptModifiersDefaultsKey = "cotabbyTerminalAcceptanceKeyModifiers"
     private static let terminalAcceptanceKeyLabelDefaultsKey = "cotabbyTerminalAcceptanceKeyLabel"
     private static let perAppShortcutOverridesDefaultsKey = "cotabbyPerAppShortcutOverrides"
-    private static let claudeCodeTuiExperimentEnabledDefaultsKey = "cotabbyClaudeCodeTuiExperimentEnabled"
+    private static let claudeCodeTuiExperimentDefaultsKey = "cotabbyClaudeCodeTuiExperimentEnabled"
 
     static let defaultAcceptanceKeyCode: CGKeyCode = 48
     static let defaultAcceptanceKeyLabel = "Tab"
@@ -351,7 +351,7 @@ final class SuggestionSettingsModel: ObservableObject {
         )
         let resolvedTerminalAcceptanceKeyModifiers = ShortcutModifierMask(
             rawValue: UInt32(
-                userDefaults.object(forKey: Self.terminalAcceptanceKeyModifiersDefaultsKey) as? Int
+                userDefaults.object(forKey: Self.terminalAcceptModifiersDefaultsKey) as? Int
                     ?? Int(Self.defaultTerminalAcceptanceKeyModifiers.rawValue)
             )
         )
@@ -362,7 +362,7 @@ final class SuggestionSettingsModel: ObservableObject {
         let resolvedPerAppShortcutOverrides = Self.loadPerAppShortcutOverrides(from: userDefaults)
 
         let resolvedClaudeCodeTuiExperimentEnabled =
-            userDefaults.object(forKey: Self.claudeCodeTuiExperimentEnabledDefaultsKey) as? Bool ?? false
+            userDefaults.object(forKey: Self.claudeCodeTuiExperimentDefaultsKey) as? Bool ?? false
 
         isGloballyEnabled = resolvedGloballyEnabled
         disabledAppRules = resolvedDisabledAppRules
@@ -448,14 +448,14 @@ final class SuggestionSettingsModel: ObservableObject {
         userDefaults.set(Int(resolvedTerminalAcceptanceKeyCode), forKey: Self.terminalAcceptanceKeyCodeDefaultsKey)
         userDefaults.set(
             Int(resolvedTerminalAcceptanceKeyModifiers.rawValue),
-            forKey: Self.terminalAcceptanceKeyModifiersDefaultsKey
+            forKey: Self.terminalAcceptModifiersDefaultsKey
         )
         userDefaults.set(resolvedTerminalAcceptanceKeyLabel, forKey: Self.terminalAcceptanceKeyLabelDefaultsKey)
         userDefaults.set(resolvedAcceptanceGranularity.rawValue, forKey: Self.acceptanceGranularityDefaultsKey)
         persistPerAppShortcutOverrides(resolvedPerAppShortcutOverrides)
         userDefaults.set(
             resolvedClaudeCodeTuiExperimentEnabled,
-            forKey: Self.claudeCodeTuiExperimentEnabledDefaultsKey
+            forKey: Self.claudeCodeTuiExperimentDefaultsKey
         )
 
         // The custom indicator icon feature was removed; scrub any previously-persisted PNG so
@@ -994,7 +994,7 @@ final class SuggestionSettingsModel: ObservableObject {
         terminalAcceptanceKeyModifiers = normalizedModifiers
         terminalAcceptanceKeyLabel = label
         userDefaults.set(Int(keyCode), forKey: Self.terminalAcceptanceKeyCodeDefaultsKey)
-        userDefaults.set(Int(normalizedModifiers.rawValue), forKey: Self.terminalAcceptanceKeyModifiersDefaultsKey)
+        userDefaults.set(Int(normalizedModifiers.rawValue), forKey: Self.terminalAcceptModifiersDefaultsKey)
         userDefaults.set(label, forKey: Self.terminalAcceptanceKeyLabelDefaultsKey)
     }
 
@@ -1005,7 +1005,7 @@ final class SuggestionSettingsModel: ObservableObject {
     func setClaudeCodeTuiExperimentEnabled(_ enabled: Bool) {
         guard isClaudeCodeTuiExperimentEnabled != enabled else { return }
         isClaudeCodeTuiExperimentEnabled = enabled
-        userDefaults.set(enabled, forKey: Self.claudeCodeTuiExperimentEnabledDefaultsKey)
+        userDefaults.set(enabled, forKey: Self.claudeCodeTuiExperimentDefaultsKey)
     }
 
     /// Fast lookup used by `ShortcutResolver` at event time. The array is small (one row per app

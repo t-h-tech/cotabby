@@ -61,14 +61,19 @@ final class TuiSessionDetectorTests: XCTestCase {
     }
 
     /// Negative title control: a benign editor title that happens to contain part of a marker
-    /// must NOT match. The `claude ` marker requires a trailing space precisely to avoid this.
+    /// must NOT produce a `.claudeCode` false positive. The `claude ` marker requires a trailing
+    /// space precisely to reject `claudeFix`. With an empty process list (we could not observe the
+    /// foreground processes), the detector stays `.unknown` rather than `.notClaudeCode`: per its
+    /// contract, a hard "definitely not Claude" verdict comes only from *observed* processes, and a
+    /// non-matching title is inconclusive — so the caller can still fall back to an OCR pass.
     func test_titleWithUnrelatedSubstring_doesNotMatch() {
         let result = TuiSessionDetector.classification(
             bundleIdentifier: "com.apple.Terminal",
             terminalAccessibilityTitle: "claudeFix.swift",
             foregroundProcessNames: { [] }
         )
-        XCTAssertEqual(result, .notClaudeCode)
+        XCTAssertNotEqual(result, .claudeCode, "The 'claude ' marker's trailing space must reject 'claudeFix'")
+        XCTAssertEqual(result, .unknown)
     }
 
     // MARK: - Process-tree heuristic

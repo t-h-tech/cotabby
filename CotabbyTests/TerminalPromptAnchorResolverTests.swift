@@ -114,8 +114,8 @@ final class TerminalPromptAnchorResolverTests: XCTestCase {
         let match = TerminalPromptAnchorResolver.LineMatch(lineIndex: 0, rawNeedleStartIndex: 0)
 
         let anchor = TerminalPromptAnchorResolver.makeAnchor(
-            match: match, lines: lines, region: region,
-            windowFrame: windowFrame, shellPid: 42, now: now
+            match: match, lines: lines,
+            geometry: .init(region: region, windowFrame: windowFrame), shellPid: 42, now: now
         )
 
         XCTAssertNotNil(anchor)
@@ -131,8 +131,8 @@ final class TerminalPromptAnchorResolverTests: XCTestCase {
         let match = TerminalPromptAnchorResolver.LineMatch(lineIndex: 0, rawNeedleStartIndex: 0)
 
         XCTAssertNil(TerminalPromptAnchorResolver.makeAnchor(
-            match: match, lines: lines, region: region,
-            windowFrame: windowFrame, shellPid: 42, now: now
+            match: match, lines: lines,
+            geometry: .init(region: region, windowFrame: windowFrame), shellPid: 42, now: now
         ))
     }
 
@@ -142,8 +142,8 @@ final class TerminalPromptAnchorResolverTests: XCTestCase {
         let match = TerminalPromptAnchorResolver.LineMatch(lineIndex: 0, rawNeedleStartIndex: Int.max)
 
         let anchor = TerminalPromptAnchorResolver.makeAnchor(
-            match: match, lines: lines, region: region,
-            windowFrame: windowFrame, shellPid: 42, now: now
+            match: match, lines: lines,
+            geometry: .init(region: region, windowFrame: windowFrame), shellPid: 42, now: now
         )
 
         XCTAssertEqual(anchor?.isLowConfidence, true)

@@ -325,9 +325,11 @@ final class TuiContextCoordinator {
         let region = AXHelper.cocoaRect(fromAccessibilityRect: inputLineCG)
         let snapshot = TuiFocusAdapter.adapt(
             reading: reading,
-            terminalBundleIdentifier: result.descriptor.bundleIdentifier,
-            terminalApplicationName: result.descriptor.applicationName,
-            terminalPid: result.descriptor.pid,
+            terminal: .init(
+                bundleIdentifier: result.descriptor.bundleIdentifier,
+                applicationName: result.descriptor.applicationName,
+                pid: result.descriptor.pid
+            ),
             promptCaretRect: caretRect,
             inputFrameRect: region,
             focusChangeSequence: focusChangeSequenceProvider()
