@@ -17,16 +17,23 @@ import Foundation
 /// and avoids a separate render policy.
 enum TuiFocusAdapter {
 
+    /// Identity of the terminal hosting the Claude Code TUI. The TUI piggybacks on the
+    /// terminal app for window resolution and per-app overrides, so the active bundle id,
+    /// display name, and PID are all the terminal's — never the `claude` subprocess's.
+    struct HostTerminal {
+        let bundleIdentifier: String
+        let applicationName: String
+        let pid: Int32
+    }
+
     /// Convert a single OCR'd prompt reading into a `FocusedInputSnapshot`.
     ///
     /// - Parameters:
     ///   - reading: The OCR result. `promptText` lands in `precedingText`; trailingText is
     ///     always empty because Claude Code only ever appends to the input line.
-    ///   - terminalBundleIdentifier: Bundle id of the hosting terminal (Ghostty, iTerm2, etc.).
-    ///     The TUI source piggybacks on the terminal app for window resolution and per-app
-    ///     overrides — the active bundle id is still the terminal's.
-    ///   - terminalPid: PID of the terminal app (NOT the `claude` subprocess). Used by the
-    ///     overlay system to find the right window when positioning ghost text / mirror cards.
+    ///   - terminal: Identity of the hosting terminal (Ghostty, iTerm2, etc.) — bundle id,
+    ///     display name, and PID. The TUI piggybacks on the terminal app for window resolution
+    ///     and per-app overrides, and the PID is the terminal's, NOT the `claude` subprocess's.
     ///   - promptCaretRect: Estimated caret rectangle in global screen coordinates. Callers
     ///     compute this from the OCR'd region's frame plus a last-line offset; the adapter does
     ///     no geometry math of its own so this file stays pure and unit-testable.
@@ -38,13 +45,14 @@ enum TuiFocusAdapter {
     ///     out of Claude Code.
     static func adapt(
         reading: TuiContextReader.PromptReading,
-        terminalBundleIdentifier: String,
-        terminalApplicationName: String,
-        terminalPid: Int32,
+        terminal: HostTerminal,
         promptCaretRect: CGRect,
         inputFrameRect: CGRect?,
         focusChangeSequence: UInt64
     ) -> FocusedInputSnapshot {
+        let terminalBundleIdentifier = terminal.bundleIdentifier
+        let terminalApplicationName = terminal.applicationName
+        let terminalPid = terminal.pid
         let promptText = reading.promptText
         // Claude Code only accepts input at the end of the editable line, so trailingText is
         // always empty. Encoding this here (rather than at the caller) keeps the contract

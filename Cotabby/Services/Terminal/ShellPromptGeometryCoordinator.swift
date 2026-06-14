@@ -237,8 +237,7 @@ final class ShellPromptGeometryCoordinator {
         guard let anchor = TerminalPromptAnchorResolver.makeAnchor(
             match: match,
             lines: extracted.lines,
-            region: result.region,
-            windowFrame: result.windowFrame,
+            geometry: .init(region: result.region, windowFrame: result.windowFrame),
             shellPid: snapshot.shellPid,
             now: Date()
         ) else {

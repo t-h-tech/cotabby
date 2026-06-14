@@ -71,8 +71,8 @@ enum TerminalPromptAnchorResolver {
     /// Fold the glyphs Vision routinely confuses for one another, WITHOUT touching
     /// alphanumerics — the buffer text must keep its identity for the match to mean anything.
     /// Collapses whitespace runs so OCR spacing differences don't break `contains`.
-    static func normalizeForOcrMatch(_ s: String) -> String {
-        normalizedWithRawIndices(s).normalized
+    static func normalizeForOcrMatch(_ text: String) -> String {
+        normalizedWithRawIndices(text).normalized
     }
 
     /// Find the OCR line showing the buffer. Empty/whitespace buffer → empty-buffer match on
@@ -99,17 +99,26 @@ enum TerminalPromptAnchorResolver {
 
     // MARK: - Anchor construction
 
-    /// Build an anchor from a match. `region` is the CG screen rect the OCR boxes were
-    /// normalized against (Vision boxes are [0,1] with a BOTTOM-LEFT origin — y maps via
+    /// The CG screen rects an OCR capture was taken against: `region` is the captured area
+    /// the Vision boxes ([0,1], BOTTOM-LEFT origin) normalize to; `windowFrame` is the
+    /// terminal window, carried onto the anchor for context.
+    struct CaptureGeometry {
+        let region: CGRect
+        let windowFrame: CGRect
+    }
+
+    /// Build an anchor from a match. `geometry.region` is the CG screen rect the OCR boxes
+    /// were normalized against (Vision boxes are [0,1] with a BOTTOM-LEFT origin — y maps via
     /// `1 - maxY`, the same flip `TuiContextCoordinator.performCapture` documents).
     static func makeAnchor(
         match: LineMatch,
         lines: [RecognizedTextLine],
-        region: CGRect,
-        windowFrame: CGRect,
+        geometry: CaptureGeometry,
         shellPid: Int32,
         now: Date
     ) -> TerminalPromptAnchor? {
+        let region = geometry.region
+        let windowFrame = geometry.windowFrame
         guard lines.indices.contains(match.lineIndex) else { return nil }
         let line = lines[match.lineIndex]
         let rawCount = line.text.count
@@ -231,7 +240,14 @@ enum TerminalPromptAnchorResolver {
     ) -> LineMatch? {
         guard !needle.isEmpty else { return nil }
 
-        var best: (index: Int, rawStart: Int, minY: CGFloat)?
+        // Local struct instead of a 3-member tuple — keeps the "lowest line wins" bookkeeping
+        // readable and named at the few use sites below.
+        struct Candidate {
+            let index: Int
+            let rawStart: Int
+            let minY: CGFloat
+        }
+        var best: Candidate?
         for (index, line) in lines.enumerated() {
             let mapped = normalizedWithRawIndices(line.text)
             guard let range = mapped.normalized.range(of: needle) else { continue }
@@ -243,7 +259,7 @@ enum TerminalPromptAnchorResolver {
             let rawStart = mapped.rawIndices[normalizedStart]
             let minY = line.boundingBox.minY
             if best == nil || minY < best!.minY {
-                best = (index, rawStart, minY)
+                best = Candidate(index: index, rawStart: rawStart, minY: minY)
             }
         }
         return best.map { LineMatch(lineIndex: $0.index, rawNeedleStartIndex: $0.rawStart) }
@@ -252,12 +268,12 @@ enum TerminalPromptAnchorResolver {
     /// Normalization that remembers, for every normalized character, the index of the raw
     /// character it came from — the match position must map back to RAW text because cell
     /// width is calibrated against the raw character count.
-    private static func normalizedWithRawIndices(_ s: String) -> (normalized: String, rawIndices: [Int]) {
+    private static func normalizedWithRawIndices(_ text: String) -> (normalized: String, rawIndices: [Int]) {
         var normalized = ""
         var rawIndices: [Int] = []
         var previousWasSpace = true   // leading whitespace is dropped (acts like trim)
 
-        for (rawIndex, rawChar) in s.enumerated() {
+        for (rawIndex, rawChar) in text.enumerated() {
             let folded = foldGlyph(rawChar)
             if folded.isWhitespace {
                 if previousWasSpace { continue }
@@ -279,8 +295,8 @@ enum TerminalPromptAnchorResolver {
         return (normalized, rawIndices)
     }
 
-    private static func foldGlyph(_ c: Character) -> Character {
-        switch c {
+    private static func foldGlyph(_ char: Character) -> Character {
+        switch char {
         case "❯", "›", "»", "➜", "▸", "▶":
             return ">"
         case "'", "’", "‘", "´", "`":
@@ -292,7 +308,7 @@ enum TerminalPromptAnchorResolver {
         case "\u{00A0}":
             return " "
         default:
-            return c
+            return char
         }
     }
 }

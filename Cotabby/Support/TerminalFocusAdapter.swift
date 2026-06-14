@@ -140,31 +140,22 @@ enum TerminalFocusAdapter {
         return String(buffer[index...])
     }
 
+    /// Human-readable names for menu bar display, keyed by terminal bundle identifier.
+    private static let displayNamesByBundleIdentifier: [String: String] = [
+        "com.mitchellh.ghostty": "Ghostty",
+        "com.apple.Terminal": "Terminal",
+        "com.googlecode.iterm2": "iTerm2",
+        "net.kovidgoyal.kitty": "Kitty",
+        "io.alacritty": "Alacritty",
+        "co.zeit.hyper": "Hyper",
+        "dev.warp.Warp-Stable": "Warp",
+        "com.github.wez.wezterm": "WezTerm",
+        "io.rio.terminal": "Rio",
+        "com.microsoft.VSCode": "VS Code"
+    ]
+
     /// Maps a terminal bundle identifier to a human-readable name for menu bar display.
     private static func applicationName(for bundleIdentifier: String) -> String {
-        switch bundleIdentifier {
-        case "com.mitchellh.ghostty":
-            return "Ghostty"
-        case "com.apple.Terminal":
-            return "Terminal"
-        case "com.googlecode.iterm2":
-            return "iTerm2"
-        case "net.kovidgoyal.kitty":
-            return "Kitty"
-        case "io.alacritty":
-            return "Alacritty"
-        case "co.zeit.hyper":
-            return "Hyper"
-        case "dev.warp.Warp-Stable":
-            return "Warp"
-        case "com.github.wez.wezterm":
-            return "WezTerm"
-        case "io.rio.terminal":
-            return "Rio"
-        case "com.microsoft.VSCode":
-            return "VS Code"
-        default:
-            return bundleIdentifier
-        }
+        displayNamesByBundleIdentifier[bundleIdentifier] ?? bundleIdentifier
     }
 }
