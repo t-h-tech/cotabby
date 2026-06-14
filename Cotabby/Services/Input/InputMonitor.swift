@@ -36,6 +36,10 @@ enum InputMonitorAcceptTapDecision: Equatable {
     case notHandled
     case passThrough
     case consume
+    /// Accept the suggestion (hide overlay, clear state) but let the keystroke pass through to the
+    /// app. Used for terminals where the shell hook's zle widget needs to see the key to insert
+    /// the suggestion text into zsh's BUFFER.
+    case acceptAndPassThrough
 }
 
 /// Installs two taps:
@@ -88,6 +92,10 @@ final class InputMonitor {
     /// coordinator. This eliminates per-keystroke overhead in apps where Cotabby will never act
     /// (terminals, globally disabled, per-app disabled).
     var shouldProcessEventsProvider: @MainActor () -> Bool = { true }
+
+    /// When true, the accept tap lets the acceptance keystroke pass through to the app after
+    /// accepting. Used for terminals where the shell hook's zle widget needs to see the key.
+    var shouldPassThroughAcceptKeyProvider: @MainActor () -> Bool = { false }
 
     /// Fail-open authorization for routing a matching accept key into the active accept tap.
     /// The tap still consumes only when the coordinator successfully accepts the event; this
@@ -537,6 +545,8 @@ final class InputMonitor {
             switch resolveAcceptKeyDown(keyEvent) {
             case .consume:
                 return nil
+            case .acceptAndPassThrough:
+                return Unmanaged.passUnretained(event)
             case .notHandled, .passThrough:
                 return Unmanaged.passUnretained(event)
             }
@@ -602,6 +612,16 @@ final class InputMonitor {
         }
 
         let eventModifiers = ShortcutModifierMask(eventFlags: keyEvent.flags)
+
+        // In terminals, let the acceptance keystroke pass through so the shell hook's zle widget
+        // can see it and insert the suggestion into zsh's BUFFER.
+        if shouldPassThroughAcceptKeyProvider() {
+            CotabbyLogger.app.debug(
+                "Accept tap accepted keyCode=\(keyEvent.keyCode) and passing through to terminal"
+            )
+            return .acceptAndPassThrough
+        }
+
         CotabbyLogger.app.debug(
             "Accept tap consumed keyCode=\(keyEvent.keyCode) modifiers=\(eventModifiers.rawValue)"
         )

@@ -69,9 +69,17 @@ struct CompletionRenderModePolicy: Equatable, Sendable {
 
     /// Decides which render mode to use for one presentation. `bundleIdentifier` may be nil when the
     /// host app could not be identified; in that case only the global preference applies.
+    ///
+    /// `isShellSurface` marks shell contexts (dedicated terminals, or embedded-terminal hosts
+    /// like VS Code with a live shell-integration session). Shell carets are always
+    /// `.estimated`, so the plain auto rule would mirror them forever; instead the auto rule
+    /// renders shells inline — their caret estimates are line-anchored (hook geometry / OCR
+    /// line boxes), and gray inline text reads as native shell completion, which is the
+    /// desired feel.
     func mode(
         for geometry: SuggestionOverlayGeometry,
-        bundleIdentifier: String?
+        bundleIdentifier: String?,
+        isShellSurface: Bool = false
     ) -> CompletionRenderMode {
         let effectivePreference: MirrorPreference
         if let bundleIdentifier, let override = perAppOverrides[bundleIdentifier] {
@@ -97,6 +105,10 @@ struct CompletionRenderModePolicy: Equatable, Sendable {
             return .mirror(reason: reason)
 
         case .auto:
+            // Shell surfaces stay inline regardless of caret quality (see doc above).
+            if isShellSurface {
+                return .inline
+            }
             // Only `.estimated` geometry triggers auto-mirror. `.derived` already lands close enough
             // to the real caret to render inline ghost text confidently; promoting it would over-fire
             // the card for hosts that work fine today (Gmail, Outlook, Discord text-marker path).

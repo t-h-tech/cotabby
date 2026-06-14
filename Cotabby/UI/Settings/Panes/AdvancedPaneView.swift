@@ -56,6 +56,7 @@ struct AdvancedPaneView: View {
         ) {
             extendedContextSection
             tryItSection
+            experimentalSection
             howThisIsUsedSection
         }
     }
@@ -196,6 +197,37 @@ struct AdvancedPaneView: View {
                     .fill(Color.accentColor.opacity(0.08))
             )
         }
+    }
+
+    /// Experimental toggles — currently just the Claude Code TUI pipeline (Sub-plan C in
+    /// `docs/plan-terminal-claude-code-and-per-app-shortcuts.md`). Kept inside the Advanced pane
+    /// so the surface stays out of the way of mainstream users; once the QA matrix is green and
+    /// the latency/accuracy gate is met, the toggle can be promoted (or default-on'd) and the
+    /// section retired.
+    private var experimentalSection: some View {
+        Section("Experimental") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(isOn: claudeCodeToggleBinding) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Claude Code autocomplete (beta)")
+                        Text("Suggest completions inside the Claude Code TUI by reading the prompt "
+                            + "with on-device screen OCR. Requires Screen Recording permission.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch)
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private var claudeCodeToggleBinding: Binding<Bool> {
+        Binding(
+            get: { suggestionSettings.isClaudeCodeTuiExperimentEnabled },
+            set: { suggestionSettings.setClaudeCodeTuiExperimentEnabled($0) }
+        )
     }
 
     private var howThisIsUsedSection: some View {

@@ -270,6 +270,142 @@ final class SuggestionCoordinatorAcceptanceTests: XCTestCase {
         }
     }
 
+    // MARK: - Terminal-mode acceptance (Phase 1 regression coverage)
+
+    /// Regression test for the B.3 rollout bug — Cotabby used to short-circuit the inserter call
+    /// when the frontmost app was a terminal with shell integration, expecting the shell hook's
+    /// `_cotabby_forward_char` widget to insert via `terminal-suggestion.txt`. B.3 deleted that
+    /// file-based path, so the short-circuit meant Right Arrow ate the keystroke but pasted
+    /// nothing. This test pins the new contract: terminal acceptance MUST route through
+    /// `SuggestionInserter.insert(...)`, where the production inserter's `isTerminalMode` flag
+    /// flips it into the bracketed-paste Cmd+V path. Stub inserter records the call so the test
+    /// proves the coordinator made it.
+    func test_acceptanceInGhosttyTerminal_routesToInserter() {
+        runOnMainActor {
+            let snapshot = CotabbyTestFixtures.focusedInputSnapshot(
+                bundleIdentifier: "com.mitchellh.ghostty",
+                precedingText: "git "
+            )
+            let context = FocusedInputContext(snapshot: snapshot, generation: 7)
+            let interactionState = SuggestionInteractionState()
+            let session = interactionState.startSession(
+                fullText: "checkout main",
+                liveContext: context,
+                latency: 0.1
+            )
+            let overlayState = OverlayState.visible(
+                text: session.remainingText,
+                geometry: CotabbyTestFixtures.overlayGeometry(caretRect: context.caretRect),
+                mode: .inline
+            )
+            let inputMonitor = StubSuggestionInputMonitor()
+            let inserter = StubSuggestionInserter()
+            let coordinator = makeCoordinator(
+                snapshot: snapshot,
+                overlayState: overlayState,
+                inputMonitor: inputMonitor,
+                inserter: inserter,
+                interactionState: interactionState
+            )
+            // Simulate the live terminal-integration session that previously gated the skip.
+            coordinator.terminalIntegrationActiveProvider = { true }
+
+            XCTAssertTrue(coordinator.acceptCurrentSuggestion())
+
+            XCTAssertFalse(
+                inserter.insertedChunks.isEmpty,
+                "Acceptance in a terminal must call SuggestionInserter.insert(...). "
+                    + "If this fails, the B.3 regression has come back — Cotabby is eating the "
+                    + "accept keystroke without pasting."
+            )
+            XCTAssertEqual(
+                inserter.insertedChunks,
+                ["checkout"],
+                "Terminal acceptance should insert the next word chunk, same as non-terminal apps."
+            )
+        }
+    }
+
+    /// Parity check: with `terminalIntegrationActiveProvider == false` the inserter still fires
+    /// (the unrelated non-terminal path is untouched). This catches a hypothetical regression
+    /// where someone "fixes" terminal-mode by inverting the gate and accidentally breaks the
+    /// non-terminal acceptance flow.
+    func test_acceptanceOutsideTerminal_stillRoutesToInserter() {
+        runOnMainActor {
+            let snapshot = CotabbyTestFixtures.focusedInputSnapshot(precedingText: "Hello")
+            let context = FocusedInputContext(snapshot: snapshot, generation: 7)
+            let interactionState = SuggestionInteractionState()
+            let session = interactionState.startSession(
+                fullText: " world",
+                liveContext: context,
+                latency: 0.1
+            )
+            let overlayState = OverlayState.visible(
+                text: session.remainingText,
+                geometry: CotabbyTestFixtures.overlayGeometry(caretRect: context.caretRect),
+                mode: .inline
+            )
+            let inputMonitor = StubSuggestionInputMonitor()
+            let inserter = StubSuggestionInserter()
+            let coordinator = makeCoordinator(
+                snapshot: snapshot,
+                overlayState: overlayState,
+                inputMonitor: inputMonitor,
+                inserter: inserter,
+                interactionState: interactionState
+            )
+            coordinator.terminalIntegrationActiveProvider = { false }
+
+            XCTAssertTrue(coordinator.acceptCurrentSuggestion())
+            XCTAssertEqual(inserter.insertedChunks, [" world"])
+        }
+    }
+
+    /// Insertion failure path: a terminal-mode insert that returns false (e.g. clipboard
+    /// permission denied) must still clear the overlay and surface the error. Mirrors the
+    /// non-terminal failure handling so the user sees the same UX regardless of terminal mode.
+    func test_terminalAcceptanceWithFailedInsert_clearsOverlay() {
+        runOnMainActor {
+            let snapshot = CotabbyTestFixtures.focusedInputSnapshot(
+                bundleIdentifier: "com.mitchellh.ghostty",
+                precedingText: "git "
+            )
+            let context = FocusedInputContext(snapshot: snapshot, generation: 7)
+            let interactionState = SuggestionInteractionState()
+            let session = interactionState.startSession(
+                fullText: "checkout",
+                liveContext: context,
+                latency: 0.1
+            )
+            let overlayState = OverlayState.visible(
+                text: session.remainingText,
+                geometry: CotabbyTestFixtures.overlayGeometry(caretRect: context.caretRect),
+                mode: .inline
+            )
+            let inputMonitor = StubSuggestionInputMonitor()
+            let inserter = StubSuggestionInserter()
+            inserter.shouldInsert = false
+            inserter.lastErrorMessage = "Clipboard write denied"
+            let coordinator = makeCoordinator(
+                snapshot: snapshot,
+                overlayState: overlayState,
+                inputMonitor: inputMonitor,
+                inserter: inserter,
+                interactionState: interactionState
+            )
+            coordinator.terminalIntegrationActiveProvider = { true }
+
+            XCTAssertFalse(coordinator.acceptCurrentSuggestion())
+            XCTAssertEqual(
+                inserter.insertedChunks,
+                ["checkout"],
+                "The insert call still has to happen so the coordinator knows it failed."
+            )
+            XCTAssertFalse(coordinator.overlayState.isVisible)
+            XCTAssertEqual(coordinator.state, .idle)
+        }
+    }
+
     @MainActor
     private func makeCoordinator(
         snapshot: FocusedInputSnapshot,
@@ -370,6 +506,12 @@ private final class StubSuggestionOverlayController: SuggestionOverlayControllin
         state = .hidden(reason: reason)
         onStateChange?(state)
     }
+
+    func setCurrentBundleIdentifier(_ bundleIdentifier: String?) {
+        currentBundleIdentifier = bundleIdentifier
+    }
+
+    private(set) var currentBundleIdentifier: String?
 }
 
 @MainActor

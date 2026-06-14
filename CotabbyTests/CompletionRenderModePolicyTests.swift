@@ -40,6 +40,34 @@ final class CompletionRenderModePolicyTests: XCTestCase {
         )
     }
 
+    /// Shell surfaces (terminals, embedded-terminal hosts with a live session) render inline
+    /// even though their carets are always `.estimated` — auto-mirroring them would mean
+    /// shells could never get ghost text at all.
+    func test_auto_returnsInlineForEstimatedGeometryOnShellSurface() {
+        let policy = CompletionRenderModePolicy(userPreference: .auto)
+        let geometry = CotabbyTestFixtures.overlayGeometry(caretQuality: .estimated)
+
+        XCTAssertEqual(
+            policy.mode(for: geometry, bundleIdentifier: "com.apple.Terminal", isShellSurface: true),
+            .inline
+        )
+    }
+
+    /// An explicit per-app "always mirror" override still beats the shell-surface inline rule —
+    /// the user said popup, they get popup.
+    func test_alwaysMirrorOverride_winsOverShellSurfaceInline() {
+        let policy = CompletionRenderModePolicy(
+            userPreference: .auto,
+            perAppOverrides: ["com.apple.Terminal": .alwaysMirror]
+        )
+        let geometry = CotabbyTestFixtures.overlayGeometry(caretQuality: .estimated)
+
+        XCTAssertEqual(
+            policy.mode(for: geometry, bundleIdentifier: "com.apple.Terminal", isShellSurface: true),
+            .mirror(reason: .perAppOverride)
+        )
+    }
+
     // MARK: - Always-inline preference
 
     func test_alwaysInline_keepsInlineEvenForEstimatedGeometry() {

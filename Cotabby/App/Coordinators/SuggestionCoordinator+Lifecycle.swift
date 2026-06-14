@@ -76,7 +76,8 @@ extension SuggestionCoordinator {
                inputMonitoringGranted: permissionManager.inputMonitoringGranted,
                screenRecordingGranted: permissionManager.screenRecordingGranted,
                focusSnapshot: focusModel.snapshot,
-               isFastModeEnabled: settingsSnapshot.isFastModeEnabled
+               isFastModeEnabled: settingsSnapshot.isFastModeEnabled,
+               terminalIntegrationActive: terminalIntegrationActiveProvider()
            ) {
             visualContextCoordinator.startSessionIfNeeded(for: focusedSnapshot)
         }
@@ -86,7 +87,8 @@ extension SuggestionCoordinator {
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: focusModel.snapshot
+            focusSnapshot: focusModel.snapshot,
+            terminalIntegrationActive: terminalIntegrationActiveProvider()
         ) {
             schedulePrediction()
         }

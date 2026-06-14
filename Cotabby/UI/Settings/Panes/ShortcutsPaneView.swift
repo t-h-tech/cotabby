@@ -9,6 +9,7 @@ struct ShortcutsPaneView: View {
     @State private var isRecordingKeybind = false
     @State private var isRecordingFullAcceptKeybind = false
     @State private var isRecordingGlobalToggleKeybind = false
+    @State private var isRecordingTerminalAcceptKeybind = false
 
     var body: some View {
         SettingsPaneScaffold {
@@ -52,6 +53,44 @@ struct ShortcutsPaneView: View {
                     SettingsRowLabel(
                         title: "Accept Word",
                         description: "Insert the next word of the suggestion."
+                    )
+                }
+
+                LabeledContent {
+                    KeybindRow(
+                        label: suggestionSettings.terminalAcceptanceKeyLabel,
+                        keyCode: suggestionSettings.terminalAcceptanceKeyCode,
+                        modifiers: suggestionSettings.terminalAcceptanceKeyModifiers,
+                        defaultKeyCode: SuggestionSettingsModel.defaultTerminalAcceptanceKeyCode,
+                        isRecording: $isRecordingTerminalAcceptKeybind,
+                        onRecord: { keyCode, modifiers, label in
+                            suggestionSettings.setTerminalAcceptanceKey(
+                                keyCode: keyCode,
+                                modifiers: modifiers,
+                                label: label
+                            )
+                        },
+                        onReset: {
+                            suggestionSettings.setTerminalAcceptanceKey(
+                                keyCode: SuggestionSettingsModel.defaultTerminalAcceptanceKeyCode,
+                                modifiers: SuggestionSettingsModel.defaultTerminalAcceptanceKeyModifiers,
+                                label: SuggestionSettingsModel.defaultTerminalAcceptanceKeyLabel
+                            )
+                        },
+                        onClear: { suggestionSettings.clearTerminalAcceptanceKey() },
+                        clearHelp: "Unbind this shortcut. No key will accept suggestions in shells.",
+                        conflictChecker: { keyCode, modifiers in
+                            suggestionSettings.conflictingShortcutName(
+                                keyCode: keyCode,
+                                modifiers: modifiers,
+                                excluding: .terminalAccept
+                            )
+                        }
+                    )
+                } label: {
+                    SettingsRowLabel(
+                        title: "Terminal Accept",
+                        description: "Accept key in shells and terminal TUIs like Claude Code. Avoid Tab — shells use it for completion."
                     )
                 }
 
@@ -132,62 +171,5 @@ struct ShortcutsPaneView: View {
     }
 }
 
-/// Shared row chrome for one keybinding. Owns the badge / Change / Reset / Clear layout and the
-/// `KeyRecorderView` recording state hand-off so the surrounding pane stays focused on what each
-/// binding does rather than how it is rendered.
-private struct KeybindRow: View {
-    let label: String
-    let keyCode: CGKeyCode
-    let modifiers: ShortcutModifierMask
-    let defaultKeyCode: CGKeyCode
-    @Binding var isRecording: Bool
-    let onRecord: (CGKeyCode, ShortcutModifierMask, String) -> Void
-    /// `nil` hides the Reset button — used by bindings whose only sensible "reset" is unbind, which
-    /// the Clear button already covers (e.g. the opt-in global-toggle hotkey).
-    let onReset: (() -> Void)?
-    let onClear: () -> Void
-    let clearHelp: String
-    /// Names the action that already owns a proposed combo so the recorder can block duplicates.
-    let conflictChecker: (CGKeyCode, ShortcutModifierMask) -> String?
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(.quaternary)
-                )
-
-            if isRecording {
-                KeyRecorderView(
-                    onKeyRecorded: { keyCode, modifiers, label in
-                        onRecord(keyCode, modifiers, label)
-                        isRecording = false
-                    },
-                    onCancelled: { isRecording = false },
-                    conflictChecker: conflictChecker
-                )
-            } else {
-                Button("Change") {
-                    isRecording = true
-                }
-            }
-
-            if let onReset, keyCode != defaultKeyCode || !modifiers.isEmpty {
-                Button("Reset") {
-                    onReset()
-                    isRecording = false
-                }
-            }
-
-            if keyCode != SuggestionSettingsModel.disabledKeyCode {
-                Button("Clear") {
-                    onClear()
-                    isRecording = false
-                }
-            }
-        }
-    }
-}
+// `KeybindRow` lives in `UI/Settings/Components/KeybindRow.swift` so both this pane and the
+// per-app shortcuts section in `AppsPaneView` share the same chrome and stay in sync.

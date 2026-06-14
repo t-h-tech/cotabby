@@ -55,6 +55,8 @@ enum CotabbyTestFixtures {
         bundleIdentifier: String = "com.example.TestApp",
         processIdentifier: Int32 = 123,
         elementIdentifier: String = "field",
+        role: String = "AXTextField",
+        subrole: String? = nil,
         caretRect: CGRect = CGRect(x: 10, y: 20, width: 2, height: 18),
         inputFrameRect: CGRect? = CGRect(x: 0, y: 0, width: 240, height: 32),
         caretQuality: CaretGeometryQuality = .exact,
@@ -72,6 +74,8 @@ enum CotabbyTestFixtures {
                 bundleIdentifier: bundleIdentifier,
                 processIdentifier: processIdentifier,
                 elementIdentifier: elementIdentifier,
+                role: role,
+                subrole: subrole,
                 caretRect: caretRect,
                 inputFrameRect: inputFrameRect,
                 caretQuality: caretQuality,
@@ -158,14 +162,16 @@ enum CotabbyTestFixtures {
         inputFrameRect: CGRect? = CGRect(x: 0, y: 0, width: 240, height: 32),
         caretQuality: CaretGeometryQuality = .exact,
         observedCharWidth: CGFloat? = nil,
-        isRightToLeft: Bool = false
+        isRightToLeft: Bool = false,
+        usesMonospacedFont: Bool = false
     ) -> SuggestionOverlayGeometry {
         SuggestionOverlayGeometry(
             caretRect: caretRect,
             inputFrameRect: inputFrameRect,
             caretQuality: caretQuality,
             observedCharWidth: observedCharWidth,
-            isRightToLeft: isRightToLeft
+            isRightToLeft: isRightToLeft,
+            usesMonospacedFont: usesMonospacedFont
         )
     }
 

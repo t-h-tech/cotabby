@@ -58,6 +58,28 @@ final class SuggestionCoordinator: ObservableObject {
     /// consumption happens through `InputMonitor.emojiCaptureKeyDecider`.
     var emojiInputObserver: ((CapturedInputEvent) -> Bool)?
 
+    /// Side-effect observer for the Claude Code TUI coordinator. Fires for every captured input
+    /// event so the TUI coordinator can schedule a debounced screenshot+OCR refresh without
+    /// owning its own event tap. Return value is `Void` — the TUI path never gates input; if
+    /// the situation doesn't match Claude Code, the closure is a fast no-op.
+    var tuiInputObserver: ((CapturedInputEvent) -> Void)?
+
+    /// Returns whether a terminal with active shell integration is currently focused.
+    /// Set by `CotabbyAppEnvironment` to check `TerminalIntegrationService` state.
+    var terminalIntegrationActiveProvider: @MainActor () -> Bool = { false }
+
+    /// Fired after a successful terminal-mode insertion (clipboard paste) so the environment
+    /// can apply an optimistic local echo to the shell session's snapshot. Bracketed paste is
+    /// invisible to the shell hooks — without the echo, the live buffer stays pre-paste until
+    /// the next REAL keystroke, which both strips legitimate separator spaces in the
+    /// whitespace reconciler and leaves the ghost positioned before the pasted text.
+    var onTerminalInsertion: (@MainActor (FocusedInputContext, String) -> Void)?
+
+    /// Called when a suggestion enters the ready state with the full suggestion text,
+    /// or with nil when the suggestion is dismissed. Used by terminal integration to
+    /// write the suggestion to a file for shell-side acceptance.
+    var onSuggestionReadyChanged: ((String?) -> Void)?
+
     static let totalTabAcceptedWordCountDefaultsKey = "cotabbyTotalAcceptedWordCount"
 
     // Combine subscriptions are the coordinator's remaining direct mutable bookkeeping.
@@ -90,6 +112,10 @@ final class SuggestionCoordinator: ObservableObject {
     /// publishes the insert, the Chromium AX-publish race that otherwise loops accept/regenerate/
     /// accept on the last word. See `SuggestionSessionReconciler.isStaleAcceptanceEcho`.
     var lastAcceptedTail: AcceptedSuggestionTail?
+    /// Dedupe key (`elementIdentifier::contentSignature`) for snapshot-driven terminal scheduling.
+    /// Shell-hook buffer reports re-arrive for the same content (precmd heartbeats); only a change
+    /// in this key schedules a new generation. See `handleSupportedSnapshot` in `+Input`.
+    var lastScheduledTerminalSignature: String?
 
     /// Monotonic token for the post-exhaustion "keep owning Tab" window. Bumped on every arm so a
     /// stale backstop timer (or a window superseded by a newer accept) no-ops instead of releasing a

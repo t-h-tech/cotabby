@@ -107,6 +107,14 @@ extension SuggestionCoordinator {
             precedingText: liveContext.precedingText
         )
 
+        // Terminals previously skipped insertion here because the shell hook's `_cotabby_forward_char`
+        // zle widget read the suggestion from a file and inserted it shell-side. Sub-plan B.3 of
+        // `docs/plan-terminal-claude-code-and-per-app-shortcuts.md` retired that path: Cotabby now
+        // consumes the accept keystroke (`shouldPassThroughAcceptKeyProvider = { false }`) and the
+        // inserter's `isTerminalMode` flag routes through `SuggestionInserter.insertForTerminal`,
+        // which pastes via bracketed-paste Cmd+V. So the same `suggestionInserter.insert(...)` call
+        // works for terminals too — no terminal short-circuit here.
+
         // An empty chunk means the accepted span was entirely a boundary space the field already
         // supplies: advance the session without synthesizing a keystroke.
         if !insertionChunk.isEmpty, !suggestionInserter.insert(insertionChunk) {
@@ -156,6 +164,12 @@ extension SuggestionCoordinator {
             // *after* the `hideOverlay` above, which routes through `onStateChange(.hidden)` and
             // turns interception off; arming re-asserts it. See `armPostExhaustionAcceptance`.
             armPostExhaustionAcceptance()
+            // Optimistic local echo for terminal pastes (no-op elsewhere): freshen the shell
+            // session's snapshot with the text just inserted so the regeneration below reads
+            // the POST-paste buffer instead of waiting for a real keystroke. Must run after
+            // `commitAcceptedChunk` — the echo re-enters snapshot handling, and reconciling
+            // an uncommitted session against post-paste text would double-advance it.
+            emitTerminalInsertionEchoIfNeeded(context: liveContext, insertedText: insertionChunk)
             // Wait for the host to actually publish the inserted text before regenerating. A bare
             // `schedulePrediction()` here reads pre-insertion AX in Chromium editors (the publish lags
             // the synthetic keystroke), so the model re-proposes the word just accepted and the next
@@ -184,6 +198,12 @@ extension SuggestionCoordinator {
                 context: liveContext,
                 isRightToLeft: isRTL
             )
+            // Optimistic local echo for terminal pastes (no-op elsewhere). Runs after
+            // `commitAcceptedChunk` so the snapshot re-entry reconciles against the ADVANCED
+            // session; its re-injection also repositions the ghost from the prompt anchor's
+            // arithmetic (post-paste cursor offset) — more accurate than `predictedCaret`,
+            // which extrapolates one chunk from the pre-paste rect.
+            emitTerminalInsertionEchoIfNeeded(context: liveContext, insertedText: insertionChunk)
             schedulePostInsertionRefresh()
             logStage(
                 "\(keyName)-accepted-chunk",
@@ -194,6 +214,14 @@ extension SuggestionCoordinator {
             )
             return true
         }
+    }
+
+    /// Optimistic local echo for terminal-mode insertions — see `onTerminalInsertion`.
+    /// Safe to call from any acceptance branch: no-op for non-terminal roles and empty chunks.
+    private func emitTerminalInsertionEchoIfNeeded(context: FocusedInputContext, insertedText: String) {
+        guard !insertedText.isEmpty,
+              TerminalCompletionPromptRenderer.isTerminalRole(context.role) else { return }
+        onTerminalInsertion?(context, insertedText)
     }
 
     /// Returns control of the accept key to the host app and clears stale suggestion UI.
@@ -381,6 +409,7 @@ extension SuggestionCoordinator {
         if let acceptanceAction {
             latestAcceptanceAction = acceptanceAction
         }
+        onSuggestionReadyChanged?(session.remainingText)
     }
 
     /// Updates the global productivity counter from text accepted via Tab.
@@ -475,6 +504,29 @@ extension SuggestionCoordinator {
         context: FocusedInputContext,
         isRightToLeft: Bool = false
     ) {
+        // Terminal generations can start BEFORE the OCR prompt anchor lands, so the context
+        // captured at generation time may carry a suppressed (zero) caret while the focus
+        // model already holds anchored geometry for the same shell by the time the result
+        // arrives. Prefer the live geometry then — otherwise the ghost stays hidden until
+        // the next keystroke even though both the suggestion and its position are known.
+        // The `context.caretRect == .zero` arm covers acceptance: `predictedCaretRect`
+        // shifts the session's caret rightward, so a zero BASE yields a small-but-nonzero
+        // garbage rect (observed: (21,0) — ghost at the screen bottom) that would slip past
+        // the presenter's zero-caret suppression.
+        var caretRect = caretRect
+        var context = context
+        if caretRect == .zero || context.caretRect == .zero,
+           TerminalCompletionPromptRenderer.isTerminalRole(context.role),
+           let liveSnapshot = focusModel.snapshot.context,
+           liveSnapshot.elementIdentifier == context.elementIdentifier,
+           liveSnapshot.caretRect != .zero {
+            caretRect = liveSnapshot.caretRect
+            context = FocusedInputContext(snapshot: liveSnapshot, generation: context.generation)
+        } else if context.caretRect == .zero, caretRect != .zero {
+            // Zero-based predicted caret with no live anchor either: suppress rather than
+            // paint at a garbage position. The presenter hides on .zero.
+            caretRect = .zero
+        }
         let geometry = SuggestionOverlayGeometry(
             caretRect: caretRect,
             inputFrameRect: context.inputFrameRect,
@@ -482,8 +534,13 @@ extension SuggestionCoordinator {
             observedCharWidth: context.observedCharWidth,
             isRightToLeft: isRightToLeft,
             focusChangeSequence: context.focusChangeSequence,
-            focusedInputIdentityKey: context.focusedInputIdentityKey
+            focusedInputIdentityKey: context.focusedInputIdentityKey,
+            usesMonospacedFont: TerminalCompletionPromptRenderer.isTerminalRole(context.role)
         )
+        // Routed before `present()` so the overlay's keycap hint resolves against the same focus
+        // session that produced this geometry — keeps a fast app switch from showing the previous
+        // app's per-app label for one frame.
+        overlayController.setCurrentBundleIdentifier(context.bundleIdentifier)
         if let message = overlayPresenter.present(
             text: text,
             geometry: geometry,

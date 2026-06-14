@@ -73,7 +73,11 @@ final class TerminalAppDetectorTests: XCTestCase {
             focusSnapshot: snapshot
         )
 
-        XCTAssertEqual(reason, "Cotabby is not available in terminal apps.")
+        XCTAssertEqual(
+            reason,
+            "Cotabby is not available in terminal apps without shell integration. "
+                + "See Settings → Terminal Integration to set up shell hooks."
+        )
     }
 
     func test_evaluator_doesNotBlockNonTerminalApp() {
@@ -110,6 +114,69 @@ final class TerminalAppDetectorTests: XCTestCase {
                 inputMonitoringGranted: true,
                 screenRecordingGranted: true,
                 focusSnapshot: snapshot
+            )
+        )
+    }
+
+    // MARK: - Terminal with shell integration
+
+    func test_evaluator_allowsTerminalWithShellIntegration() {
+        let snapshot = FocusSnapshot(
+            applicationName: "Ghostty",
+            bundleIdentifier: "com.mitchellh.ghostty",
+            capability: .supported,
+            context: nil,
+            inspection: nil
+        )
+
+        let reason = SuggestionAvailabilityEvaluator.disabledReason(
+            globallyEnabled: true,
+            inputMonitoringGranted: true,
+            screenRecordingGranted: true,
+            focusSnapshot: snapshot,
+            terminalIntegrationActive: true
+        )
+
+        XCTAssertNil(reason, "Terminal with active shell integration should be allowed")
+    }
+
+    func test_evaluator_blocksTerminalWithoutShellIntegration() {
+        let snapshot = FocusSnapshot(
+            applicationName: "Ghostty",
+            bundleIdentifier: "com.mitchellh.ghostty",
+            capability: .supported,
+            context: nil,
+            inspection: nil
+        )
+
+        let reason = SuggestionAvailabilityEvaluator.disabledReason(
+            globallyEnabled: true,
+            inputMonitoringGranted: true,
+            screenRecordingGranted: true,
+            focusSnapshot: snapshot,
+            terminalIntegrationActive: false
+        )
+
+        XCTAssertNotNil(reason)
+        XCTAssertTrue(reason?.contains("shell integration") ?? false)
+    }
+
+    func test_shouldSchedulePrediction_trueForTerminalWithIntegration() {
+        let snapshot = FocusSnapshot(
+            applicationName: "iTerm2",
+            bundleIdentifier: "com.googlecode.iterm2",
+            capability: .supported,
+            context: nil,
+            inspection: nil
+        )
+
+        XCTAssertTrue(
+            SuggestionAvailabilityEvaluator.shouldSchedulePrediction(
+                globallyEnabled: true,
+                inputMonitoringGranted: true,
+                screenRecordingGranted: true,
+                focusSnapshot: snapshot,
+                terminalIntegrationActive: true
             )
         )
     }

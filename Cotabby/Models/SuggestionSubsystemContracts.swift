@@ -140,6 +140,11 @@ protocol SuggestionOverlayControlling: AnyObject {
 
     func showSuggestion(_ text: String, geometry: SuggestionOverlayGeometry)
     func hide(reason: String)
+    /// Routes the frontmost app's bundle identifier to the overlay so per-app shortcut overrides
+    /// (and any future per-app render policy) can take effect immediately on a focus change. Called
+    /// from `SuggestionCoordinator.presentOverlay` so the value tracks the focus snapshot that
+    /// drove this particular suggestion rather than whatever the snapshot looked like at install.
+    func setCurrentBundleIdentifier(_ bundleIdentifier: String?)
 }
 
 @MainActor

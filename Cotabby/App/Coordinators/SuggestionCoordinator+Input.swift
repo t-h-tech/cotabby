@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Logging
 
@@ -16,7 +17,8 @@ extension SuggestionCoordinator {
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: focusModel.snapshot
+            focusSnapshot: focusModel.snapshot,
+            terminalIntegrationActive: terminalIntegrationActiveProvider()
         ) {
             handleSupportedSnapshot(focusModel.snapshot)
         }
@@ -52,7 +54,8 @@ extension SuggestionCoordinator {
                inputMonitoringGranted: permissionManager.inputMonitoringGranted,
                screenRecordingGranted: permissionManager.screenRecordingGranted,
                focusSnapshot: snapshot,
-               isFastModeEnabled: settingsSnapshot.isFastModeEnabled
+               isFastModeEnabled: settingsSnapshot.isFastModeEnabled,
+               terminalIntegrationActive: terminalIntegrationActiveProvider()
            ) {
             visualContextCoordinator.startSessionIfNeeded(for: context)
         }
@@ -62,7 +65,8 @@ extension SuggestionCoordinator {
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: snapshot
+            focusSnapshot: snapshot,
+            terminalIntegrationActive: terminalIntegrationActiveProvider()
         ) {
             disablePredictionsPreservingVisualContext(reason: disabledReason)
         } else {
@@ -85,7 +89,8 @@ extension SuggestionCoordinator {
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
             focusSnapshot: snapshot,
-            isFastModeEnabled: settingsSnapshot.isFastModeEnabled
+            isFastModeEnabled: settingsSnapshot.isFastModeEnabled,
+            terminalIntegrationActive: terminalIntegrationActiveProvider()
         ) {
             visualContextCoordinator.startSessionIfNeeded(for: focusedContext)
         }
@@ -96,6 +101,13 @@ extension SuggestionCoordinator {
 
         if interactionState.activeSession != nil {
             reconcileActiveSession(with: snapshot)
+            // Reconciliation may have just invalidated or completed the session (the user typed
+            // text that diverges from the suggestion). Keystroke-driven flows reschedule from the
+            // event tap, but terminal snapshots ARE the keystroke signal — so when the session is
+            // gone, fall through to the same snapshot-driven scheduling used below. While a
+            // session remains live (typing through the tail), stay hands-off.
+            scheduleTerminalSnapshotPredictionIfNeeded(for: focusedContext, onlyIfNoActiveSession: true)
+            repositionTerminalOverlayIfNeeded(for: focusedContext)
             return
         }
 
@@ -115,6 +127,49 @@ extension SuggestionCoordinator {
         if overlayState.isVisible {
             hideOverlay(reason: "Overlay hidden because no ready suggestion remains.")
         }
+
+        scheduleTerminalSnapshotPredictionIfNeeded(for: focusedContext)
+    }
+
+    /// Terminal sources only: the shell hook's buffer report IS the authoritative
+    /// "text changed" signal, so schedule generation from the snapshot itself instead of
+    /// relying solely on the CGEvent tap. The tap still schedules for real keystrokes —
+    /// `schedulePrediction` coalesces via `replaceDebouncedWork`, so double-scheduling
+    /// collapses to one generation. This also covers edits the tap can never see:
+    /// synthetic/automated input (TCC hides it from taps) and programmatic buffer changes.
+    /// Keyed by element + content so a re-report of the same buffer (precmd heartbeat)
+    /// doesn't re-schedule, while the same text typed in a NEW shell window does.
+    func scheduleTerminalSnapshotPredictionIfNeeded(
+        for context: FocusedInputSnapshot,
+        onlyIfNoActiveSession: Bool = false
+    ) {
+        guard TerminalCompletionPromptRenderer.isTerminalRole(context.role) else { return }
+        if onlyIfNoActiveSession, interactionState.activeSession != nil { return }
+        let signature = "\(context.elementIdentifier)::\(context.contentSignature)"
+        guard signature != lastScheduledTerminalSignature else { return }
+        lastScheduledTerminalSignature = signature
+        schedulePrediction()
+    }
+
+    /// Terminal sources re-inject the SAME buffer when the OCR prompt anchor resolves — the
+    /// content didn't change, only the caret geometry did, so no generation re-runs and nothing
+    /// else would re-present the ready suggestion. Without this the ghost stays wherever it was
+    /// first presented (typically suppressed at the zero caret) until the next keystroke.
+    private func repositionTerminalOverlayIfNeeded(for context: FocusedInputSnapshot) {
+        guard TerminalCompletionPromptRenderer.isTerminalRole(context.role) else { return }
+        guard case let .ready(text, _) = state, !text.isEmpty else { return }
+        guard context.caretRect != .zero else { return }
+        // Presenter would diff this to a no-op anyway; skipping avoids re-render churn on
+        // every precmd heartbeat that re-reports identical geometry.
+        if case let .visible(_, geometry, _) = overlayState, geometry.caretRect == context.caretRect {
+            return
+        }
+        presentOverlay(
+            text: text,
+            at: context.caretRect,
+            context: FocusedInputContext(snapshot: context, generation: latestGenerationNumber ?? 0),
+            isRightToLeft: TextDirectionDetector.isRightToLeft(context.precedingText)
+        )
     }
 
     /// Fire-and-forget warmup that builds a minimal request shape for the current focus and asks
@@ -157,12 +212,18 @@ extension SuggestionCoordinator {
             return false
         }
 
+        // TUI side-effect observer: gives the Claude Code OCR coordinator a chance to schedule a
+        // debounced refresh on every keystroke. The closure is a fast no-op when the experiment
+        // is off or the situation doesn't match Claude Code, so we can call it unconditionally.
+        tuiInputObserver?(event)
+
         if let disabledReason = SuggestionAvailabilityEvaluator.disabledReason(
             globallyEnabled: settingsSnapshot.isGloballyEnabled,
             disabledAppBundleIdentifiers: settingsSnapshot.disabledAppBundleIdentifiers,
             inputMonitoringGranted: permissionManager.inputMonitoringGranted,
             screenRecordingGranted: permissionManager.screenRecordingGranted,
-            focusSnapshot: focusModel.snapshot
+            focusSnapshot: focusModel.snapshot,
+            terminalIntegrationActive: terminalIntegrationActiveProvider()
         ) {
             disablePredictions(reason: disabledReason)
             return false

@@ -468,6 +468,11 @@ struct SuggestionOverlayGeometry: Equatable, Sendable {
     /// self-growing inputs. It DOES change when the user focuses a genuinely different field.
     /// Defaults to 0 for tests that do not exercise session-scoped behavior.
     let focusedInputIdentityKey: UInt64
+    /// True for terminal-grid surfaces (shell prompts, Claude Code TUI). The layout budgets
+    /// line widths with `observedCharWidth` (a monospace cell width there), so the rendered
+    /// glyphs must be monospaced too — a proportional font under a monospace budget overshoots
+    /// the computed right edge and paints past the wrap point.
+    let usesMonospacedFont: Bool
 
     init(
         caretRect: CGRect,
@@ -476,7 +481,8 @@ struct SuggestionOverlayGeometry: Equatable, Sendable {
         observedCharWidth: CGFloat?,
         isRightToLeft: Bool,
         focusChangeSequence: UInt64 = 0,
-        focusedInputIdentityKey: UInt64 = 0
+        focusedInputIdentityKey: UInt64 = 0,
+        usesMonospacedFont: Bool = false
     ) {
         self.caretRect = caretRect
         self.inputFrameRect = inputFrameRect
@@ -485,6 +491,7 @@ struct SuggestionOverlayGeometry: Equatable, Sendable {
         self.isRightToLeft = isRightToLeft
         self.focusChangeSequence = focusChangeSequence
         self.focusedInputIdentityKey = focusedInputIdentityKey
+        self.usesMonospacedFont = usesMonospacedFont
     }
 }
 

@@ -83,9 +83,20 @@ final class FocusDebugOverlayController {
         contentView.layoutSubtreeIfNeeded()
         let contentSize = contentView.fittingSize
 
-        // Anchor the line at the caret position with the label floating above.
+        // Anchor the line at the caret position with the label floating above. Terminal-grid
+        // surfaces are the exception: there the ghost text renders rightward FROM the caret on
+        // the same line, so a caret-anchored badge sits exactly where the suggestion paints.
+        // Anchor at the prompt line's LEFT edge instead — ghost text never renders left of the
+        // typed text, so the two cannot collide there.
+        let anchorX: CGFloat
+        if TerminalCompletionPromptRenderer.isTerminalRole(context.role),
+           let inputFrame = context.inputFrameRect, !inputFrame.isEmpty {
+            anchorX = inputFrame.minX + 2
+        } else {
+            anchorX = context.caretRect.minX - 1
+        }
         let origin = CGPoint(
-            x: context.caretRect.minX - 1,
+            x: anchorX,
             y: context.caretRect.minY
         )
 

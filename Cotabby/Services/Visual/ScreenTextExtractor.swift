@@ -11,9 +11,24 @@ import Logging
 /// it is bounded semantic extraction for autocomplete context. This pass favors useful text
 /// recovery over minimum latency because the output is captured once per focused field.
 
+/// One recognized OCR line with its position.
+///
+/// `boundingBox` is Vision-normalized: components in [0, 1], BOTTOM-LEFT origin, relative to
+/// the OCR'd image. Consumers that need screen coordinates map it onto the captured rect
+/// themselves (see `TuiContextCoordinator`) — keeping it normalized here means this type stays
+/// ignorant of windows, displays, and Retina scales.
+struct RecognizedTextLine: Equatable, Sendable {
+    let text: String
+    let boundingBox: CGRect
+}
+
 struct ExtractedScreenText: Sendable {
     let text: String
     let lineCount: Int
+    /// Per-line text + normalized geometry, top-to-bottom. Defaulted so existing construction
+    /// sites (and test stubs) that only care about the flattened text keep compiling; only the
+    /// TUI prompt reader consumes the geometry.
+    var lines: [RecognizedTextLine] = []
 }
 
 /// Test seam for screenshot OCR.
@@ -72,7 +87,10 @@ struct ScreenTextExtractor: ScreenTextExtracting {
                     }
 
                     let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
-                    let orderedLines = observations
+                    // Keep the geometry alongside the text: Vision's normalized bounding boxes
+                    // are the only reliable way to position overlays on OCR'd content (the TUI
+                    // path anchors the suggestion card to the recognized input line).
+                    let recognizedLines = observations
                         .sorted {
                             if Swift.abs($0.boundingBox.minY - $1.boundingBox.minY) > 0.02 {
                                 return $0.boundingBox.minY > $1.boundingBox.minY
@@ -80,9 +98,13 @@ struct ScreenTextExtractor: ScreenTextExtracting {
 
                             return $0.boundingBox.minX < $1.boundingBox.minX
                         }
-                        .compactMap { $0.topCandidates(1).first?.string }
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
+                        .compactMap { observation -> RecognizedTextLine? in
+                            guard let candidate = observation.topCandidates(1).first?.string else { return nil }
+                            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else { return nil }
+                            return RecognizedTextLine(text: trimmed, boundingBox: observation.boundingBox)
+                        }
+                    let orderedLines = recognizedLines.map(\.text)
 
                     let joinedText = orderedLines.joined(separator: "\n")
                     let cappedText = String(joinedText.prefix(maxRecognizedCharacters))
@@ -100,7 +122,11 @@ struct ScreenTextExtractor: ScreenTextExtracting {
                             "preview=\(self.preview(cappedText))"
                     )
 
-                    continuation.resume(returning: ExtractedScreenText(text: cappedText, lineCount: orderedLines.count))
+                    continuation.resume(returning: ExtractedScreenText(
+                        text: cappedText,
+                        lineCount: orderedLines.count,
+                        lines: recognizedLines
+                    ))
                 }
 
                 // Accurate OCR is slower, but visual context is only captured once per focused

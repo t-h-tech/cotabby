@@ -85,7 +85,8 @@ struct GhostSuggestionLayout: Equatable {
         let singleLineFits = !normalizedText.contains("\n") && measuredWidth(
             of: normalizedText,
             fontSize: fontSize,
-            observedCharWidth: geometry.observedCharWidth
+            observedCharWidth: geometry.observedCharWidth,
+            monospaced: geometry.usesMonospacedFont
         ) <= firstLineBudget
 
         if singleLineFits {
@@ -112,7 +113,8 @@ struct GhostSuggestionLayout: Equatable {
                 from: remainingText,
                 maxWidth: firstLineBudget,
                 fontSize: fontSize,
-                observedCharWidth: geometry.observedCharWidth
+                observedCharWidth: geometry.observedCharWidth,
+                monospaced: geometry.usesMonospacedFont
             )
             if !split.line.isEmpty {
                 let indent: CGFloat
@@ -135,7 +137,8 @@ struct GhostSuggestionLayout: Equatable {
                 from: remainingText,
                 maxWidth: overflowBudget,
                 fontSize: fontSize,
-                observedCharWidth: geometry.observedCharWidth
+                observedCharWidth: geometry.observedCharWidth,
+                monospaced: geometry.usesMonospacedFont
             )
             guard !split.line.isEmpty else {
                 break
@@ -239,7 +242,8 @@ struct GhostSuggestionLayout: Equatable {
         from text: String,
         maxWidth: CGFloat,
         fontSize: CGFloat,
-        observedCharWidth: CGFloat?
+        observedCharWidth: CGFloat?,
+        monospaced: Bool = false
     ) -> (line: String, remainder: String) {
         let source = text.trimmingCharacters(in: .whitespaces)
         guard !source.isEmpty else {
@@ -255,11 +259,14 @@ struct GhostSuggestionLayout: Equatable {
                 newlineIndex: newlineIndex,
                 maxWidth: maxWidth,
                 fontSize: fontSize,
-                observedCharWidth: observedCharWidth
+                observedCharWidth: observedCharWidth,
+                monospaced: monospaced
             )
         }
 
-        if measuredWidth(of: source, fontSize: fontSize, observedCharWidth: observedCharWidth) <= safeMaxWidth {
+        if measuredWidth(
+            of: source, fontSize: fontSize, observedCharWidth: observedCharWidth, monospaced: monospaced
+        ) <= safeMaxWidth {
             return (source, "")
         }
 
@@ -272,7 +279,9 @@ struct GhostSuggestionLayout: Equatable {
                 lastWhitespaceBreak = endIndex + 1
             }
 
-            if measuredWidth(of: prefix, fontSize: fontSize, observedCharWidth: observedCharWidth) > safeMaxWidth {
+            if measuredWidth(
+                of: prefix, fontSize: fontSize, observedCharWidth: observedCharWidth, monospaced: monospaced
+            ) > safeMaxWidth {
                 if let breakIndex = lastWhitespaceBreak, breakIndex > 0 {
                     let line = String(characters[..<breakIndex])
                         .trimmingCharacters(in: .whitespaces)
@@ -299,7 +308,8 @@ struct GhostSuggestionLayout: Equatable {
         newlineIndex: String.Index,
         maxWidth: CGFloat,
         fontSize: CGFloat,
-        observedCharWidth: CGFloat?
+        observedCharWidth: CGFloat?,
+        monospaced: Bool = false
     ) -> (line: String, remainder: String) {
         let safeMaxWidth = max(maxWidth, Metrics.minimumLineWidth)
         let segment = String(source[..<newlineIndex]).trimmingCharacters(in: .whitespaces)
@@ -309,15 +319,23 @@ struct GhostSuggestionLayout: Equatable {
             : ""
 
         guard !segment.isEmpty else {
-            return splitPrefix(from: afterNewline, maxWidth: maxWidth, fontSize: fontSize, observedCharWidth: observedCharWidth)
+            return splitPrefix(
+                from: afterNewline, maxWidth: maxWidth, fontSize: fontSize,
+                observedCharWidth: observedCharWidth, monospaced: monospaced
+            )
         }
 
-        if measuredWidth(of: segment, fontSize: fontSize, observedCharWidth: observedCharWidth) <= safeMaxWidth {
+        if measuredWidth(
+            of: segment, fontSize: fontSize, observedCharWidth: observedCharWidth, monospaced: monospaced
+        ) <= safeMaxWidth {
             return (segment, afterNewline)
         }
 
         // Segment before newline is too wide — width-wrap it, keep post-newline as remainder.
-        let widthSplit = splitPrefix(from: segment, maxWidth: maxWidth, fontSize: fontSize, observedCharWidth: observedCharWidth)
+        let widthSplit = splitPrefix(
+            from: segment, maxWidth: maxWidth, fontSize: fontSize,
+            observedCharWidth: observedCharWidth, monospaced: monospaced
+        )
         let combined: String
         if widthSplit.remainder.isEmpty {
             combined = afterNewline
@@ -332,14 +350,19 @@ struct GhostSuggestionLayout: Equatable {
     private static func measuredWidth(
         of text: String,
         fontSize: CGFloat,
-        observedCharWidth: CGFloat?
+        observedCharWidth: CGFloat?,
+        monospaced: Bool = false
     ) -> CGFloat {
         if let observedCharWidth, observedCharWidth > 0 {
             return CGFloat((text as NSString).length) * observedCharWidth
         }
 
-        return (text as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: fontSize)
-        ]).width
+        // The measuring font must match what GhostSuggestionView renders, or the budget and
+        // the painted glyphs disagree about where the line ends (terminal surfaces render
+        // monospaced; see SuggestionOverlayGeometry.usesMonospacedFont).
+        let font = monospaced
+            ? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            : NSFont.systemFont(ofSize: fontSize)
+        return (text as NSString).size(withAttributes: [.font: font]).width
     }
 }

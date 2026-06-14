@@ -603,6 +603,12 @@ private final class FakeOverlayController: SuggestionOverlayControlling {
         state = .hidden(reason: reason)
         onStateChange?(state)
     }
+
+    func setCurrentBundleIdentifier(_ bundleIdentifier: String?) {
+        currentBundleIdentifier = bundleIdentifier
+    }
+
+    private(set) var currentBundleIdentifier: String?
 }
 
 @MainActor

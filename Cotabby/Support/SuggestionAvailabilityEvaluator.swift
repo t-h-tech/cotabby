@@ -6,6 +6,15 @@ import Foundation
 ///
 /// The value of this helper is consistency: permission/focus checks appear in several coordinator
 /// paths, and moving them here prevents small wording or branching differences from creeping in.
+///
+/// **Active-input-source precedence (Sub-plan D).** When the frontmost app is a terminal, the
+/// `terminalIntegrationActive` parameter means "*any* terminal-source is live for this app":
+///   1. **Claude Code TUI** (OCR-driven) — wins while Claude Code is foreground.
+///   2. **Shell-prompt** (shell-integration hooks) — wins at the bare shell prompt.
+/// Both paths inject through `FocusTrackingModel.injectTerminalSnapshot`, so the caller is
+/// responsible for OR-ing the two signals before passing them in. The evaluator does not pick
+/// between sources — the `FocusSnapshot.context.role` already records which adapter produced
+/// the snapshot (`TerminalShellInput` vs. `ClaudeCodeTuiInput`).
 enum SuggestionAvailabilityEvaluator {
     static func disabledReason(
         globallyEnabled: Bool = true,
@@ -13,7 +22,8 @@ enum SuggestionAvailabilityEvaluator {
         inputMonitoringGranted: Bool,
         screenRecordingGranted: Bool,
         focusSnapshot: FocusSnapshot,
-        checkCapability: Bool = true
+        checkCapability: Bool = true,
+        terminalIntegrationActive: Bool = false
     ) -> String? {
         guard globallyEnabled else {
             return "Cotabby is turned off."
@@ -24,8 +34,10 @@ enum SuggestionAvailabilityEvaluator {
             return "Cotabby is disabled in \(focusSnapshot.applicationName)."
         }
 
-        if TerminalAppDetector.isTerminal(bundleIdentifier: focusSnapshot.bundleIdentifier) {
-            return "Cotabby is not available in terminal apps."
+        if TerminalAppDetector.isTerminal(bundleIdentifier: focusSnapshot.bundleIdentifier),
+           !terminalIntegrationActive {
+            return "Cotabby is not available in terminal apps without shell integration. "
+                + "See Settings → Terminal Integration to set up shell hooks."
         }
 
         guard inputMonitoringGranted else {
@@ -54,14 +66,16 @@ enum SuggestionAvailabilityEvaluator {
         disabledAppBundleIdentifiers: Set<String> = [],
         inputMonitoringGranted: Bool,
         screenRecordingGranted: Bool,
-        focusSnapshot: FocusSnapshot
+        focusSnapshot: FocusSnapshot,
+        terminalIntegrationActive: Bool = false
     ) -> Bool {
         disabledReason(
             globallyEnabled: globallyEnabled,
             disabledAppBundleIdentifiers: disabledAppBundleIdentifiers,
             inputMonitoringGranted: inputMonitoringGranted,
             screenRecordingGranted: screenRecordingGranted,
-            focusSnapshot: focusSnapshot
+            focusSnapshot: focusSnapshot,
+            terminalIntegrationActive: terminalIntegrationActive
         ) == nil
     }
 
@@ -80,7 +94,8 @@ enum SuggestionAvailabilityEvaluator {
         inputMonitoringGranted: Bool,
         screenRecordingGranted: Bool,
         focusSnapshot: FocusSnapshot,
-        isFastModeEnabled: Bool = false
+        isFastModeEnabled: Bool = false,
+        terminalIntegrationActive: Bool = false
     ) -> Bool {
         guard !isFastModeEnabled else {
             return false
@@ -92,7 +107,8 @@ enum SuggestionAvailabilityEvaluator {
             inputMonitoringGranted: inputMonitoringGranted,
             screenRecordingGranted: screenRecordingGranted,
             focusSnapshot: focusSnapshot,
-            checkCapability: false
+            checkCapability: false,
+            terminalIntegrationActive: terminalIntegrationActive
         ) == nil
     }
 
