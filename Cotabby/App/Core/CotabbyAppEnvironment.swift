@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import Logging
@@ -37,6 +38,9 @@ final class CotabbyAppEnvironment {
     let activationIndicatorController: ActivationIndicatorController
     let focusDebugOverlayController: FocusDebugOverlayController?
     let terminalIntegrationService: TerminalIntegrationService
+    let tuiScreenshotService: TuiScreenshotService
+    let tuiContextCoordinator: TuiContextCoordinator
+    let shellPromptGeometryCoordinator: ShellPromptGeometryCoordinator
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -59,8 +63,8 @@ final class CotabbyAppEnvironment {
         )
         // Acceptance key providers are set after focusModel and terminalIntegrationService
         // are created, since terminal-aware key selection reads both.
-        inputMonitor.fullAcceptanceKeyCodeProvider = { suggestionSettings.fullAcceptanceKeyCode }
-        inputMonitor.fullAcceptanceKeyModifiersProvider = { suggestionSettings.fullAcceptanceKeyModifiers }
+        // `fullAcceptance*` providers are set later, alongside the terminal-aware acceptance
+        // closures, so the per-app resolver can read the frontmost bundle id from focusModel.
         inputMonitor.globalToggleKeyCodeProvider = { suggestionSettings.globalToggleKeyCode }
         inputMonitor.globalToggleKeyModifiersProvider = { suggestionSettings.globalToggleKeyModifiers }
         inputMonitor.onGlobalToggleHotkey = { [weak suggestionSettings] in
@@ -92,14 +96,17 @@ final class CotabbyAppEnvironment {
         inputMonitor.shouldProcessEventsProvider = { [weak focusModel] in
             guard suggestionSettings.isGloballyEnabled else { return false }
             guard let snapshot = focusModel?.snapshot else { return true }
-            // Allow input processing for terminals with active shell integration.
+            // Allow input processing for terminals with either an active shell-integration
+            // session OR the Claude Code TUI experiment on. The TUI path needs the listen-only
+            // observer to fire on every keystroke so the OCR coordinator can debounce a
+            // refresh — gating on shell-only would silently disable Claude Code autocomplete
+            // even with the experiment switched on.
             if TerminalAppDetector.isTerminal(bundleIdentifier: snapshot.bundleIdentifier) {
-                guard let bid = snapshot.bundleIdentifier,
-                      suggestionSettings.isTerminalIntegrationEnabled,
-                      terminalIntegrationService.hasActiveSession(forBundleIdentifier: bid) else {
-                    return false
-                }
-                return true
+                guard let bid = snapshot.bundleIdentifier else { return false }
+                let shellActive = suggestionSettings.isTerminalIntegrationEnabled
+                    && terminalIntegrationService.hasActiveSession(forBundleIdentifier: bid)
+                let tuiActive = suggestionSettings.isClaudeCodeTuiExperimentEnabled
+                return shellActive || tuiActive
             }
             if let bundleID = snapshot.bundleIdentifier,
                suggestionSettings.isApplicationDisabled(bundleIdentifier: bundleID) {
@@ -107,32 +114,81 @@ final class CotabbyAppEnvironment {
             }
             return true
         }
+        // Single source of truth for "the user is typing into a shell": dedicated terminals
+        // always; embedded-terminal hosts (VS Code, Cursor…) only while one of their shells
+        // holds a live integration session. Drives the accept-key resolution below, the
+        // overlay's render-mode/hint decisions, and nothing else — keep it that way so every
+        // shell-facing behavior flips together.
+        let shellSurfaceProvider: (String?) -> Bool = { bundleIdentifier in
+            guard let bundleIdentifier else { return false }
+            if TerminalAppDetector.isTerminal(bundleIdentifier: bundleIdentifier) { return true }
+            return TerminalAppDetector.hostsEmbeddedTerminal(bundleIdentifier: bundleIdentifier)
+                && terminalIntegrationService.hasActiveSession(forBundleIdentifier: bundleIdentifier)
+        }
+
         // Now that focusModel and terminalIntegrationService exist, set the terminal-aware
-        // acceptance key providers. When a terminal with shell integration is focused, the
-        // acceptance key swaps to the terminal-specific binding (Option+Tab by default).
+        // acceptance key providers. Resolution runs at event time so a fast app switch never
+        // resolves against stale state. Precedence (highest first):
+        //   1. terminal-specific binding (any shell surface — see `shellSurfaceProvider`),
+        //   2. per-app override for the frontmost app (`ShortcutResolver`),
+        //   3. global accept binding.
+        // Same shape applies to the full-accept providers below.
         inputMonitor.acceptanceKeyCodeProvider = { [weak focusModel] in
-            if let bid = focusModel?.snapshot.bundleIdentifier,
-               TerminalAppDetector.isTerminal(bundleIdentifier: bid),
+            let bid = focusModel?.snapshot.bundleIdentifier
+            if shellSurfaceProvider(bid),
                suggestionSettings.isTerminalIntegrationEnabled {
                 return suggestionSettings.terminalAcceptanceKeyCode
             }
-            return suggestionSettings.acceptanceKeyCode
+            return ShortcutResolver.acceptBinding(
+                frontmostBundleIdentifier: bid,
+                overrides: suggestionSettings.perAppShortcutOverrides,
+                globalKeyCode: suggestionSettings.acceptanceKeyCode,
+                globalModifiers: suggestionSettings.acceptanceKeyModifiers,
+                globalLabel: suggestionSettings.acceptanceKeyLabel
+            ).keyCode
         }
         inputMonitor.acceptanceKeyModifiersProvider = { [weak focusModel] in
-            if let bid = focusModel?.snapshot.bundleIdentifier,
-               TerminalAppDetector.isTerminal(bundleIdentifier: bid),
+            let bid = focusModel?.snapshot.bundleIdentifier
+            if shellSurfaceProvider(bid),
                suggestionSettings.isTerminalIntegrationEnabled {
                 return suggestionSettings.terminalAcceptanceKeyModifiers
             }
-            return suggestionSettings.acceptanceKeyModifiers
+            return ShortcutResolver.acceptBinding(
+                frontmostBundleIdentifier: bid,
+                overrides: suggestionSettings.perAppShortcutOverrides,
+                globalKeyCode: suggestionSettings.acceptanceKeyCode,
+                globalModifiers: suggestionSettings.acceptanceKeyModifiers,
+                globalLabel: suggestionSettings.acceptanceKeyLabel
+            ).modifiers
         }
-        // In terminals, let the acceptance keystroke pass through so the shell hook's zle widget
-        // can see it and insert the text into zsh's BUFFER.
-        inputMonitor.shouldPassThroughAcceptKeyProvider = { [weak focusModel] in
-            guard let bid = focusModel?.snapshot.bundleIdentifier else { return false }
-            return TerminalAppDetector.isTerminal(bundleIdentifier: bid)
-                && suggestionSettings.isTerminalIntegrationEnabled
+        inputMonitor.fullAcceptanceKeyCodeProvider = { [weak focusModel] in
+            ShortcutResolver.fullAcceptBinding(
+                frontmostBundleIdentifier: focusModel?.snapshot.bundleIdentifier,
+                overrides: suggestionSettings.perAppShortcutOverrides,
+                globalKeyCode: suggestionSettings.fullAcceptanceKeyCode,
+                globalModifiers: suggestionSettings.fullAcceptanceKeyModifiers,
+                globalLabel: suggestionSettings.fullAcceptanceKeyLabel
+            ).keyCode
         }
+        inputMonitor.fullAcceptanceKeyModifiersProvider = { [weak focusModel] in
+            ShortcutResolver.fullAcceptBinding(
+                frontmostBundleIdentifier: focusModel?.snapshot.bundleIdentifier,
+                overrides: suggestionSettings.perAppShortcutOverrides,
+                globalKeyCode: suggestionSettings.fullAcceptanceKeyCode,
+                globalModifiers: suggestionSettings.fullAcceptanceKeyModifiers,
+                globalLabel: suggestionSettings.fullAcceptanceKeyLabel
+            ).modifiers
+        }
+        // Terminal acceptance now flows through Cotabby's own clipboard-paste path
+        // (`SuggestionInserter.isTerminalMode == true`, which uses bracketed paste / Cmd+V).
+        // Cotabby consumes the keystroke just like in any other app, so the shell hook does NOT
+        // also insert via its file-based `_cotabby_forward_char` widget — that path is left in
+        // the scripts as a documented fallback for terminals where CGEvent-based paste is
+        // unreliable, and it naturally no-ops because `terminal-suggestion.txt` is no longer
+        // written. Keeping pass-through default to false unifies all surfaces on a single
+        // acceptance path, removes the per-keystroke file race the old path created, and means
+        // the configured terminal accept key actually does what it says.
+        inputMonitor.shouldPassThroughAcceptKeyProvider = { false }
         let appUpdateManager = AppUpdateManager()
         let launchAtLoginService = LaunchAtLoginService()
         let welcomeCoordinator = WelcomeCoordinator(
@@ -150,6 +206,9 @@ final class CotabbyAppEnvironment {
         // generations using the same router the autocomplete pipeline does.
         let suggestionInserter = SuggestionInserter(suppressionController: suppressionController)
         let overlayController = OverlayController(suggestionSettings: suggestionSettings)
+        // Shell surfaces render inline ghost text and advertise the terminal accept key —
+        // same rule the InputMonitor providers use, so UI and key handling never disagree.
+        overlayController.shellSurfaceProvider = shellSurfaceProvider
         let activationIndicatorController = ActivationIndicatorController()
         let clipboardContextProvider = ClipboardContextProvider()
         let clipboardRelevanceFilter = ClipboardRelevanceFilter()
@@ -248,19 +307,115 @@ final class CotabbyAppEnvironment {
             emojiPickerController?.observe(event) ?? false
         }
 
-        // Terminal integration: tell the coordinator how to check for active shell sessions.
+        // Terminal integration: tell the coordinator that *any* terminal-source is live for the
+        // frontmost app. The flag is a single boolean for the evaluator, but the closure ORs the
+        // two sources defined in Sub-plan D so adding the TUI path doesn't fork the gating
+        // logic. Precedence (TUI over shell) is captured by the `FocusSnapshot.context.role`
+        // string, which the adapters set distinctly.
         suggestionCoordinator.terminalIntegrationActiveProvider = { [weak focusModel] in
-            guard suggestionSettings.isTerminalIntegrationEnabled else { return false }
+            // A TUI-injected snapshot reaches the focus model with the `ClaudeCodeTuiInput`
+            // role; checking the live snapshot keeps the closure in lockstep with whatever
+            // source last updated focus. Checked before the terminal-app gate because the TUI
+            // path also serves embedded-terminal hosts (VS Code), which are NOT in the
+            // dedicated-terminal list.
+            if suggestionSettings.isClaudeCodeTuiExperimentEnabled,
+               focusModel?.snapshot.context?.role == "ClaudeCodeTuiInput" {
+                return true
+            }
             guard let bid = focusModel?.snapshot.bundleIdentifier else { return false }
-            return TerminalAppDetector.isTerminal(bundleIdentifier: bid)
+            guard TerminalAppDetector.isTerminal(bundleIdentifier: bid) else { return false }
+            return suggestionSettings.isTerminalIntegrationEnabled
                 && terminalIntegrationService.hasActiveSession(forBundleIdentifier: bid)
         }
 
+        // OCR prompt anchors for shell-surface ghost positioning. The screenshot service is
+        // shared with the Claude Code TUI pipeline below; constructed here because the shell
+        // report handler needs the geometry coordinator.
+        let tuiScreenshotService = TuiScreenshotService()
+        let shellPromptGeometryCoordinator = ShellPromptGeometryCoordinator(
+            captureSession: { snapshot in
+                // The debounced capture can fire after an app switch — only shoot the screen
+                // while the reporting terminal is still frontmost.
+                guard let app = NSWorkspace.shared.frontmostApplication,
+                      app.bundleIdentifier == snapshot.terminalBundleIdentifier
+                else { return nil }
+                let pid = app.processIdentifier
+                guard let windowFrame = try await tuiScreenshotService.windowFrame(forPid: pid) else {
+                    return nil
+                }
+                let region = embeddedHostCaptureRegion(
+                    windowFrame: windowFrame,
+                    pid: pid,
+                    bundleIdentifier: snapshot.terminalBundleIdentifier
+                )
+                guard let image = try await tuiScreenshotService.captureRegion(forPid: pid, region: region) else {
+                    return nil
+                }
+                return ShellPromptGeometryCoordinator.CaptureResult(
+                    region: region,
+                    windowFrame: windowFrame,
+                    image: image
+                )
+            },
+            windowFrameProvider: { snapshot in
+                guard let pid = TerminalGeometryResolver.terminalAppPid(
+                    forBundleIdentifier: snapshot.terminalBundleIdentifier
+                ) else { return nil }
+                return TerminalGeometryResolver.windowFrame(forPid: pid)
+            },
+            isEnabled: { [weak permissionManager] in
+                // ScreenCaptureKit needs Screen Recording; without it the coordinator stays
+                // inert and shell surfaces simply show no ghost (suppressed caret), the same
+                // gate the TUI path uses.
+                permissionManager?.screenRecordingGranted ?? false
+            }
+        )
+
         // When a shell hook reports buffer state, enrich it with geometry and inject it into
         // the focus model so the suggestion pipeline sees terminal input like any other field.
-        terminalIntegrationService.onSnapshotUpdate = { [weak focusModel] rawSnapshot in
+        // Shared by the live report path AND the anchor-resolved re-injection below.
+        let handleShellReport: @MainActor (TerminalFocusSnapshot) -> Void = { [weak focusModel] rawSnapshot in
+            // Only the frontmost terminal's shells may drive focus. Several hooked shells can
+            // be alive at once (other windows, other terminal apps), and their heartbeat
+            // reports would otherwise hijack the focus model and cancel in-flight generations
+            // for the terminal the user is actually typing in.
+            guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                    == rawSnapshot.terminalBundleIdentifier else { return }
+            // Embedded-terminal hosts (VS Code etc.) own real AX text fields in the SAME
+            // bundle (editor, search, Cmd+P) — those must keep AX service. But the integrated
+            // terminal itself is an xterm.js canvas that exposes NO focused AX element (its
+            // focus capability stays .unsupported), so the shell hook is the ONLY input
+            // source there. Inject unless a supported AX element currently owns focus;
+            // terminal-role snapshots are our own injections and never block a fresh report.
+            if TerminalAppDetector.hostsEmbeddedTerminal(
+                bundleIdentifier: rawSnapshot.terminalBundleIdentifier
+            ) {
+                let current = focusModel?.snapshot
+                let role = current?.context?.role
+                let axOwnsFocus = current?.bundleIdentifier == rawSnapshot.terminalBundleIdentifier
+                    && current?.capability == .supported
+                    && role != "TerminalShellInput"
+                    && role != "ClaudeCodeTuiInput"
+                if axOwnsFocus { return }
+            }
             suggestionInserter.isTerminalMode = true
-            let enriched = TerminalGeometryResolver.enrichWithGeometry(rawSnapshot)
+            // May schedule a debounced OCR pass (new prompt / invalidated anchor); cheap no-op
+            // while a valid anchor serves this shell.
+            shellPromptGeometryCoordinator.snapshotReported(rawSnapshot)
+            let enriched: TerminalFocusSnapshot
+            if let resolved = shellPromptGeometryCoordinator.geometry(for: rawSnapshot) {
+                enriched = rawSnapshot.withGeometry(
+                    windowFrame: resolved.windowFrame,
+                    cursorRect: resolved.caretRect,
+                    promptLineRect: resolved.inputLineRect,
+                    observedCellWidth: resolved.cellWidth
+                )
+            } else {
+                // No anchor (yet): legacy enrichment carries the window frame for context but
+                // produces NO caret — the overlay stays hidden rather than guessing, and the
+                // onAnchorResolved re-injection below snaps it in moments later.
+                enriched = TerminalGeometryResolver.enrichWithGeometry(rawSnapshot)
+            }
             let adapted = TerminalFocusAdapter.adapt(
                 enriched,
                 terminalPid: TerminalGeometryResolver.terminalAppPid(
@@ -277,6 +432,46 @@ final class CotabbyAppEnvironment {
             )
             focusModel?.injectTerminalSnapshot(focusSnapshot)
         }
+        terminalIntegrationService.onSnapshotUpdate = handleShellReport
+        // A fresh anchor re-runs the report path with the shell's LATEST buffer so the ghost
+        // snaps from hidden to positioned without waiting for the next keystroke.
+        shellPromptGeometryCoordinator.onAnchorResolved = { shellPid in
+            guard let latest = terminalIntegrationService.latestSnapshot(forPid: shellPid) else { return }
+            handleShellReport(latest)
+        }
+        // Optimistic local echo after Cotabby's own terminal paste — bracketed paste never
+        // reaches the per-keystroke shell hooks, so the session snapshot must be advanced
+        // natively or it stays pre-paste until the next real keystroke (stripping legitimate
+        // separator spaces on the next accept and mispositioning the remaining-tail ghost).
+        // Shell sessions are addressed by their adapter identity "terminal-<shellPid>"; the
+        // TUI's "tui-claude-code-*" elements fall through (no session — the OCR heartbeat
+        // refreshes those).
+        suggestionCoordinator.onTerminalInsertion = { context, insertedText in
+            let prefix = "terminal-"
+            guard context.elementIdentifier.hasPrefix(prefix),
+                  let shellPid = Int32(context.elementIdentifier.dropFirst(prefix.count)) else { return }
+            terminalIntegrationService.applyOptimisticInsertion(
+                shellPid: shellPid,
+                insertedText: insertedText
+            )
+        }
+
+        // When the user moves from an embedded host's terminal pane to a real AX text field
+        // (VS Code editor), the focus model reclaims focus from the injection — the inserter
+        // must leave clipboard-paste mode with it or an acceptance in the editor would paste
+        // instead of using AX insertion.
+        focusModel.onTerminalInjectionReclaimed = {
+            suggestionInserter.isTerminalMode = false
+        }
+
+        // Debug-only: the E2E harness sends `{"type":"accept"}` over the socket to trigger the
+        // real acceptance path. Test automation cannot synthesize a keystroke that CGEvent taps
+        // receive (TCC drops cross-process posts), so this is the only scriptable way to exercise
+        // accept → clipboard paste end to end. Hard-gated on the debug launch argument.
+        terminalIntegrationService.onAcceptRequest = { [weak suggestionCoordinator] in
+            guard CotabbyDebugOptions.isEnabled else { return }
+            _ = suggestionCoordinator?.acceptCurrentSuggestion()
+        }
 
         // When a shell session connects or disconnects, reconcile the coordinator state
         // and clear AX polling suppression so normal focus tracking resumes.
@@ -284,8 +479,193 @@ final class CotabbyAppEnvironment {
             if terminalIntegrationService.sessions.isEmpty {
                 focusModel?.clearTerminalInjection()
                 suggestionInserter.isTerminalMode = false
+                shellPromptGeometryCoordinator.invalidateAll()
+            } else {
+                shellPromptGeometryCoordinator.prune(keeping: terminalIntegrationService.sessions.keys)
             }
             suggestionCoordinator?.reconcileWithCurrentEnvironment()
+        }
+
+        // Claude Code TUI pipeline (Sub-plan C). The screenshot service (created above, shared
+        // with the shell-prompt anchors) owns the ScreenCaptureKit window lookup + region
+        // capture; the coordinator owns the debounce + adapter wiring and is fed every
+        // keystroke through the `tuiInputObserver` hook below. Both stay no-ops until the
+        // user opts in by flipping the experiment flag (default off).
+        // The TUI providers deliberately read NSWorkspace (the real frontmost app), NOT the
+        // focus model: while a TUI owns the terminal there is no AX text element and no live
+        // shell report, so `focusModel.snapshot.context` is nil exactly when Claude Code is
+        // the thing on screen.
+        let tuiContextCoordinator = TuiContextCoordinator(
+            captureSession: { [weak focusModel] in
+                guard let app = NSWorkspace.shared.frontmostApplication,
+                      let bid = app.bundleIdentifier,
+                      TerminalAppDetector.isTerminal(bundleIdentifier: bid)
+                        || TerminalAppDetector.hostsEmbeddedTerminal(bundleIdentifier: bid)
+                else { return nil }
+                // Same editor-protection rule as the shell-injection path: in an embedded
+                // host a supported, non-terminal-role snapshot means a real AX text field
+                // (the editor) owns focus. OCR-injecting over it would hijack the editor —
+                // and the focus model's AX reclaim would immediately undo it, re-arming an
+                // inject/reclaim flicker loop once per heartbeat.
+                if TerminalAppDetector.hostsEmbeddedTerminal(bundleIdentifier: bid),
+                   let current = focusModel?.snapshot,
+                   current.bundleIdentifier == bid,
+                   current.capability == .supported,
+                   current.context?.role != "TerminalShellInput",
+                   current.context?.role != "ClaudeCodeTuiInput" {
+                    return nil
+                }
+                let pid = app.processIdentifier
+                guard let windowFrame = try await tuiScreenshotService.windowFrame(forPid: pid) else {
+                    return nil
+                }
+                // Capture the WHOLE window, not a bottom band: Claude Code anchors its input
+                // box under the conversation content, so in a fresh/short session the editable
+                // line sits near the TOP of the window and a bottom crop misses it entirely
+                // (windowed mode was broken for exactly this reason). The reader finds the
+                // prompt-glyph line wherever it is; OCR on a full window stays ~200 ms.
+                // Embedded hosts get pane-constrained capture — see embeddedHostCaptureRegion.
+                let region = embeddedHostCaptureRegion(
+                    windowFrame: windowFrame,
+                    pid: pid,
+                    bundleIdentifier: bid
+                )
+                guard let image = try await tuiScreenshotService.captureRegion(forPid: pid, region: region) else {
+                    return nil
+                }
+                let descriptor = TuiContextCoordinator.TerminalWindowDescriptor(
+                    windowFrame: windowFrame,
+                    pid: pid,
+                    bundleIdentifier: bid,
+                    applicationName: app.localizedName ?? "Terminal"
+                )
+                return TuiContextCoordinator.CaptureResult(descriptor: descriptor, region: region, image: image)
+            },
+            frontmostBundleProvider: {
+                NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            },
+            terminalTitleProvider: {
+                // Reading the terminal window's title would require a fresh AX call against the
+                // focused window (none of the existing snapshot fields carry it). The
+                // process-tree heuristic below is more reliable than a half-correct title, so
+                // we return nil here and let the detector fall straight through to processes.
+                // A follow-up can wire AXUIElementCopyAttributeValue for kAXTitleAttribute when
+                // a terminal's foreground binary doesn't show up in the process tree.
+                nil
+            },
+            foregroundProcessProvider: {
+                // Walk the descendants of the frontmost app's process so the detector can spot
+                // `claude` / `claude-code` even when the terminal strips OSC titles. The
+                // inspector is a single sysctl read plus an in-memory tree walk — cheap enough
+                // to run from the debounced refresh.
+                guard let app = NSWorkspace.shared.frontmostApplication else { return [] }
+                guard let bid = app.bundleIdentifier,
+                      TerminalAppDetector.hostsEmbeddedTerminal(bundleIdentifier: bid) else {
+                    return ProcessTreeInspector.descendantProcessNames(of: app.processIdentifier)
+                }
+                // Embedded hosts: the app-wide subtree includes extension-host `claude`
+                // processes (the Claude Code VS Code extension keeps one alive even with no
+                // TUI in the integrated terminal), which kept the detector stuck on
+                // .claudeCode after the TUI exited. Walk only the hooked shell sessions'
+                // subtrees — a TUI launched from the integrated terminal is a descendant of
+                // (or, via `exec`, IS) one of those shells; extension processes are not.
+                // Deliberately NO app-pid fallback when no session is registered: it would
+                // resurrect the extension false positive on unhooked terminals.
+                let shellPids = terminalIntegrationService.sessions.values
+                    .filter { $0.terminalBundleIdentifier == bid }
+                    .map(\.shellPid)
+                guard !shellPids.isEmpty else { return [] }
+                return ProcessTreeInspector.subtreeProcessNames(rootedAt: shellPids)
+            },
+            focusChangeSequenceProvider: { [weak focusModel] in
+                focusModel?.snapshot.context?.focusChangeSequence ?? 0
+            },
+            isEnabled: { [weak permissionManager] in
+                guard suggestionSettings.isClaudeCodeTuiExperimentEnabled else { return false }
+                // Screen Recording is the load-bearing permission for ScreenCaptureKit. Cutting
+                // the loop here means a user who hasn't granted it never sees ScreenCaptureKit
+                // throw a permission error on every keystroke.
+                return permissionManager?.screenRecordingGranted ?? false
+            },
+            isShellActivelyReporting: {
+                // "Fresh" = the frontmost app's shell reported a buffer within the last 2 s,
+                // i.e. keystrokes are reaching a bare prompt — shell-prompt source owns input
+                // there and the TUI path yields (claude may be alive in another tab).
+                guard let bid = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                      let latest = terminalIntegrationService.latestSnapshot(forBundleIdentifier: bid)
+                else { return false }
+                return Date().timeIntervalSince(latest.timestamp) < 2.0
+            },
+            injectSnapshot: { [weak focusModel] snapshot in
+                let focusSnapshot = FocusSnapshot(
+                    applicationName: snapshot.applicationName,
+                    bundleIdentifier: snapshot.bundleIdentifier,
+                    capability: .supported,
+                    context: snapshot,
+                    inspection: nil
+                )
+                focusModel?.injectTerminalSnapshot(focusSnapshot)
+                // The TUI path uses the same terminal clipboard-paste insertion as the shell
+                // path, so flip the inserter into terminal mode while a Claude Code prompt is
+                // live. `onSessionChange` (above) flips it back off when the user steps away.
+                suggestionInserter.isTerminalMode = true
+            },
+            clearInjection: { [weak focusModel] in
+                // `hasInjectedSnapshot` can be stale-true after the SHELL path overwrote the
+                // TUI's injection (the shell never touches the TUI's flag), so a TUI-initiated
+                // clear must verify the live snapshot is actually TUI-owned — otherwise the
+                // claude-exit heartbeat would tear down a healthy shell prompt session.
+                let role = focusModel?.snapshot.context?.role
+                guard role != "TerminalShellInput" else { return }
+                if role == "ClaudeCodeTuiInput" {
+                    focusModel?.clearTerminalInjection()
+                }
+                // Reset insertion mode even when focus already moved on (e.g. the user
+                // switched apps and an AX snapshot replaced the injection before this clear
+                // ran) — a lingering true would clipboard-paste into normal AX fields.
+                suggestionInserter.isTerminalMode = false
+            }
+        )
+        tuiContextCoordinator.startHeartbeat()
+        // Captured by reference in the observer closure below; counts consecutive keystrokes
+        // that arrived while the shell snapshot was stale. See the guard inside the closure.
+        var staleTerminalKeystrokes = 0
+        suggestionCoordinator.tuiInputObserver = { [weak tuiContextCoordinator, weak focusModel] event in
+            // Only text-mutation events warrant a refresh — selection moves, modifier-only
+            // presses, etc. would burn the OCR latency budget without changing the prompt.
+            guard event.kind == .textMutation || event.kind == .shortcutMutation else { return }
+            tuiContextCoordinator?.keystrokeObserved()
+
+            // Stale shell-buffer guard (Sub-plan D precedence). While a TUI (Claude Code) owns
+            // the tty, the shell hook is suspended and its last buffer report freezes — but the
+            // injected snapshot would keep serving that stale text to every generation the
+            // user's TUI keystrokes schedule (observed: typing in Claude Code inside VS Code's
+            // terminal produced completions of the long-dead "$ claude" buffer). The invariant:
+            // keystrokes are arriving but the shell is not re-reporting ⇒ the shell no longer
+            // sees input ⇒ stop trusting its snapshot. Three consecutive stale keystrokes are
+            // required so the first key after an idle pause (whose hook report lands a few ms
+            // AFTER the tap fires) never clears a live prompt session.
+            if let context = focusModel?.snapshot.context,
+               context.role == "TerminalShellInput",
+               let bundleIdentifier = focusModel?.snapshot.bundleIdentifier {
+                let lastReport = terminalIntegrationService
+                    .latestSnapshot(forBundleIdentifier: bundleIdentifier)?.timestamp
+                let age = lastReport.map { Date().timeIntervalSince($0) } ?? .infinity
+                if age > 2.0 {
+                    staleTerminalKeystrokes += 1
+                    if staleTerminalKeystrokes >= 3 {
+                        staleTerminalKeystrokes = 0
+                        focusModel?.clearTerminalInjection()
+                        // Leaving terminal-sourced focus must also leave clipboard-paste
+                        // insertion, or the next acceptance in a normal AX field pastes.
+                        suggestionInserter.isTerminalMode = false
+                    }
+                } else {
+                    staleTerminalKeystrokes = 0
+                }
+            } else {
+                staleTerminalKeystrokes = 0
+            }
         }
 
         self.permissionManager = permissionManager
@@ -312,31 +692,24 @@ final class CotabbyAppEnvironment {
             ? FocusDebugOverlayController()
             : nil
         self.terminalIntegrationService = terminalIntegrationService
+        self.tuiScreenshotService = tuiScreenshotService
+        self.tuiContextCoordinator = tuiContextCoordinator
+        self.shellPromptGeometryCoordinator = shellPromptGeometryCoordinator
 
-        // Write the current suggestion to a file so the shell hook can read and insert it
-        // when the user presses right-arrow. This bypasses CGEvent tap issues in terminals.
-        let suggestionFilePath = FileManager.default.urls(
+        // Legacy `terminal-suggestion.txt` file-based acceptance was replaced by the
+        // `SuggestionInserter` terminal mode's clipboard-paste path in B.3 of
+        // `docs/plan-terminal-claude-code-and-per-app-shortcuts.md`. Cotabby now consumes the
+        // terminal accept keystroke (see `shouldPassThroughAcceptKeyProvider = { false }` above)
+        // and inserts via Cmd+V into the shell's bracketed-paste handler, which unifies all
+        // surfaces on a single code path and removes the file-poll race with the shell widget.
+        //
+        // Stale suggestion files from a previous build can confuse the shell-side fallback
+        // widget (which still exists as a documented backstop), so we sweep one on launch.
+        let legacySuggestionFilePath = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first!.appendingPathComponent("Cotabby/terminal-suggestion.txt").path
-
-        suggestionCoordinator.onSuggestionReadyChanged = { [weak focusModel] suggestion in
-            // Write the suggestion file whenever the focused app is a terminal with an active
-            // shell integration session. The zsh hook reads this file when right-arrow is pressed.
-            // Check by bundle ID + active session rather than isTerminalMode or element ID,
-            // because the AX pipeline may handle Ghostty with a non-terminal element ID.
-            let bid = focusModel?.snapshot.bundleIdentifier
-            let isTerminal = bid.map { TerminalAppDetector.isTerminal(bundleIdentifier: $0) } ?? false
-
-            if isTerminal, let text = suggestion, !text.isEmpty {
-                try? text.write(toFile: suggestionFilePath, atomically: true, encoding: .utf8)
-            } else if !isTerminal {
-                // Only delete the file when NOT in a terminal. In terminals, the zsh hook's
-                // forward-char widget reads and deletes the file after inserting the text.
-                // Deleting here would race with the widget and prevent acceptance.
-                try? FileManager.default.removeItem(atPath: suggestionFilePath)
-            }
-        }
+        try? FileManager.default.removeItem(atPath: legacySuggestionFilePath)
 
         // Update the AX polling timer whenever the user changes the poll interval setting.
         suggestionSettings.$focusPollIntervalMilliseconds
@@ -359,4 +732,25 @@ final class CotabbyAppEnvironment {
             }
             .store(in: &cancellables)
     }
+}
+
+/// Capture region for a terminal screenshot, shared by the Claude Code TUI and shell-prompt
+/// capture closures. Dedicated terminals use the whole window. Embedded-terminal hosts
+/// (VS Code etc.) constrain to the focused pane's AX frame when one exists — full-window OCR
+/// there reads editor chrome ("> Connect to…" welcome links, tab labels) as prompt content —
+/// and fall back to the window when AX has nothing usable (tiny/foreign element, no focus,
+/// which is the NORMAL state for the AX-dead integrated terminal).
+@MainActor
+private func embeddedHostCaptureRegion(
+    windowFrame: CGRect,
+    pid: pid_t,
+    bundleIdentifier: String
+) -> CGRect {
+    guard TerminalAppDetector.hostsEmbeddedTerminal(bundleIdentifier: bundleIdentifier),
+          let focusedElement = AXHelper.focusedElement(forApplicationPID: pid),
+          let paneFrame = AXHelper.rectValue(for: "AXFrame" as CFString, on: focusedElement)
+    else { return windowFrame }
+    let clamped = paneFrame.intersection(windowFrame)
+    guard clamped.height > 60, clamped.width > 200 else { return windowFrame }
+    return clamped
 }

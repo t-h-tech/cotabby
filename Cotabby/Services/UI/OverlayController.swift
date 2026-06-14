@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Logging
 import SwiftUI
 
 /// File overview:
@@ -29,6 +30,18 @@ final class OverlayController: SuggestionOverlayControlling {
     /// a suggestion is presented. The policy uses this to look up per-app overrides. Nil in tests
     /// or when the focus pipeline could not identify the host.
     private var currentBundleIdentifier: String?
+
+    /// Answers "is this bundle a shell surface right now?" — dedicated terminals always, and
+    /// embedded-terminal hosts (VS Code etc.) while one of their shells has a live integration
+    /// session. Set by `CotabbyAppEnvironment`; nil (tests) means "never a shell surface".
+    /// Drives BOTH the render mode (shells render inline ghost text, not the popup card) and
+    /// the keycap hint (shells accept with the terminal key, not the global one) so the two
+    /// can never disagree about what kind of surface the user is on.
+    var shellSurfaceProvider: ((String?) -> Bool)?
+
+    private var currentSurfaceIsShell: Bool {
+        shellSurfaceProvider?(currentBundleIdentifier) ?? false
+    }
 
     /// Built from the live `mirrorPreference` setting at call time rather than cached. The struct
     /// is tiny (one enum + an empty dict in Phase 2) so per-show allocation cost is negligible,
@@ -113,7 +126,8 @@ final class OverlayController: SuggestionOverlayControlling {
 
         let mode = currentRenderModePolicy.mode(
             for: geometry,
-            bundleIdentifier: currentBundleIdentifier
+            bundleIdentifier: currentBundleIdentifier,
+            isShellSurface: currentSurfaceIsShell
         )
 
         switch mode {
@@ -150,7 +164,10 @@ final class OverlayController: SuggestionOverlayControlling {
         )
         // `nil` when the user disabled the hint or no accept key is bound — in that case the layout
         // drops the keycap and its reserved width so ghost text can use the full line.
-        let acceptanceHintLabel = suggestionSettings.acceptanceHintLabel
+        let acceptanceHintLabel = suggestionSettings.resolvedAcceptanceHintLabel(
+            forBundleIdentifier: currentBundleIdentifier,
+            isShellSurface: currentSurfaceIsShell
+        )
         let layout = GhostSuggestionLayout.make(
             text: text,
             geometry: geometry,
@@ -168,7 +185,8 @@ final class OverlayController: SuggestionOverlayControlling {
             fontSize: fontSize,
             customColor: customGhostColor,
             keycapLabel: acceptanceHintLabel,
-            opacity: ghostOpacity
+            opacity: ghostOpacity,
+            usesMonospacedFont: geometry.usesMonospacedFont
         )
 
         let contentView: NSHostingView<GhostSuggestionView>
@@ -195,6 +213,15 @@ final class OverlayController: SuggestionOverlayControlling {
 
         panel.setFrame(frame.integral, display: true)
         panel.orderFrontRegardless()
+        // Placement record for diagnosis and the position E2E: ghost mispositioning is
+        // invisible in state logs (the overlay IS visible — just in the wrong place), so the
+        // actual AppKit coordinates must be on the record. Debug level: file sinks only exist
+        // under -cotabby-debug.
+        let caretLabel = "(\(Int(geometry.caretRect.minX)),\(Int(geometry.caretRect.minY)))"
+        let panelLabel = "(\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width))x\(Int(frame.height)))"
+        CotabbyLogger.app.debug(
+            "Inline ghost shown: caret=\(caretLabel) panel=\(panelLabel) lines=\(layout.lines.count) mono=\(geometry.usesMonospacedFont)"
+        )
     }
 
     /// Mirror-mode rendering. Draws the suggestion inside a Cotabby-owned card anchored to the
@@ -206,7 +233,10 @@ final class OverlayController: SuggestionOverlayControlling {
         geometry: SuggestionOverlayGeometry,
         reason: CompletionRenderMode.MirrorReason
     ) {
-        let acceptanceHintLabel = suggestionSettings.acceptanceHintLabel
+        let acceptanceHintLabel = suggestionSettings.resolvedAcceptanceHintLabel(
+            forBundleIdentifier: currentBundleIdentifier,
+            isShellSurface: currentSurfaceIsShell
+        )
         let visibleFrame = targetScreenVisibleFrame(for: geometry.caretRect)
         let layout = MirrorOverlayLayout.make(
             suggestion: text,
@@ -299,6 +329,9 @@ private struct GhostSuggestionView: View {
     /// User-controlled fade for the suggestion text, in [0.3, 1.0]. Applied only to the ghost text,
     /// not the keycap, so the acceptance hint stays legible at low opacities.
     let opacity: Double
+    /// Terminal-grid surfaces budget line widths with a monospace cell width — the painted
+    /// glyphs must match or the text overshoots the computed wrap point.
+    var usesMonospacedFont: Bool = false
 
     var ghostColor: Color {
         let baseColor = customColor
@@ -321,7 +354,7 @@ private struct GhostSuggestionView: View {
                     }
 
                     Text(line.text)
-                        .font(.system(size: fontSize))
+                        .font(.system(size: fontSize, design: usesMonospacedFont ? .monospaced : .default))
                         .foregroundStyle(ghostColor)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: true)

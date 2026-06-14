@@ -67,16 +67,30 @@ enum SuggestionRequestFactory {
         // Custom instructions and persona condition the output rather than being obeyed. The
         // Foundation Models path builds its own messages from these same request fields, so this
         // prompt string is only consumed by the llama engine.
-        let prompt = BaseCompletionPromptRenderer.prompt(
-            prefixText: prefixText,
-            applicationName: context.applicationName,
-            userName: userName,
-            customRules: customRules,
-            extendedContext: activeExtendedContext,
-            languageInstruction: languageInstruction,
-            clipboardContext: boundedClipboardContext,
-            visualContextSummary: boundedVisualContextSummary
-        )
+        //
+        // Terminal sources get a document-shaped prompt instead: the prose persona preface makes
+        // a base model continue "git ch" as English. Persona/style/clipboard/screen context are
+        // intentionally dropped there — they are prose conditioning, and the OCR'd screen text of
+        // a terminal is mostly its own scrollback, which steers the model toward echoing it.
+        let prompt: String
+        if TerminalCompletionPromptRenderer.isTerminalRole(context.role) {
+            prompt = TerminalCompletionPromptRenderer.prompt(
+                prefixText: prefixText,
+                role: context.role,
+                subrole: context.subrole
+            )
+        } else {
+            prompt = BaseCompletionPromptRenderer.prompt(
+                prefixText: prefixText,
+                applicationName: context.applicationName,
+                userName: userName,
+                customRules: customRules,
+                extendedContext: activeExtendedContext,
+                languageInstruction: languageInstruction,
+                clipboardContext: boundedClipboardContext,
+                visualContextSummary: boundedVisualContextSummary
+            )
+        }
 
         let request = SuggestionRequest(
             context: context,

@@ -743,11 +743,43 @@ Both hooks require `socat` for socket communication. This is a runtime
 dependency (`brew install socat`). Alternatives: Python socket script, or
 `/dev/tcp` in bash 4+ (not available in macOS default bash 3.2).
 
-### 5. Existing test string update
+### 5. Existing test string update (DONE)
 
 `CotabbyTests/TerminalAppDetectorTests.swift` —
-`test_evaluator_blocksTerminalApp` expects the old disabled reason string. Must
-update to match the new message mentioning shell integration.
+`test_evaluator_blocksTerminalApp` updated to match the new message.
+
+### 6. Autocomplete inside Claude Code interactive mode
+
+The zsh shell hook only works in zsh's line editor (zle). Claude Code has its
+own input handler (a Node.js line editor), so the hook does not fire while
+Claude Code is running. Suggestions currently do NOT work inside Claude Code's
+interactive prompt.
+
+**Possible approaches:**
+
+- **Claude Code plugin/hook API**: If Claude Code exposes a plugin system or
+  hook for third-party input suggestions, Cotabby could integrate at that level.
+  This would require Claude Code to support an extension point.
+
+- **OCR-based input detection**: Cotabby could read Claude Code's visible
+  terminal text via screenshot + OCR (the existing visual context pipeline),
+  detect the cursor position by finding the `>` prompt marker, and generate
+  suggestions based on what's visible. Acceptance would use clipboard paste
+  (`Cmd+V`) since the zle widget isn't available.
+
+- **Terminal escape sequence injection**: Instead of zle widgets, Cotabby could
+  inject text directly into the terminal's PTY via escape sequences. This is
+  how tools like Warp and Fig/Amazon Q handle autocomplete in arbitrary terminal
+  programs. Requires low-level PTY access.
+
+- **Claude Code `--mcp` integration**: Claude Code supports MCP servers. Cotabby
+  could run as an MCP server that Claude Code queries for completions. This
+  would be the cleanest integration but requires Claude Code to support
+  autocomplete via MCP.
+
+**Complexity:** High. Each approach requires significant new infrastructure.
+The OCR-based approach is most feasible with existing Cotabby code but would
+have latency and accuracy tradeoffs.
 
 ---
 

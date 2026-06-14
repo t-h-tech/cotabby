@@ -291,4 +291,65 @@ final class SuggestionRequestFactoryTests: XCTestCase {
         XCTAssertEqual(clipboardContext.count, 1_200)
         XCTAssertTrue(clipboardContext.hasSuffix("..."))
     }
+
+    // MARK: - terminal prompt routing
+
+    /// Shell-integration snapshots must get the transcript-shaped terminal prompt, not the prose
+    /// persona prompt — a base model continues "git ch" as English under the prose preface.
+    func test_buildRequest_terminalShellRole_usesTerminalPrompt() {
+        let context = CotabbyTestFixtures.focusedInputContext(
+            role: "TerminalShellInput",
+            subrole: "zsh",
+            precedingText: "git ch"
+        )
+        let settings = CotabbyTestFixtures.settingsSnapshot(
+            userName: "Tamim",
+            customRules: ["Write concisely"]
+        )
+
+        let result = SuggestionRequestFactory.buildRequest(
+            context: context,
+            settings: settings,
+            configuration: .standard
+        )
+
+        XCTAssertTrue(result.request.prompt.hasSuffix("$ git ch"))
+        XCTAssertFalse(result.request.prompt.contains("Written by"))
+        XCTAssertFalse(result.request.prompt.contains("Writing style"))
+    }
+
+    func test_buildRequest_claudeCodeTuiRole_usesAssistantFraming() {
+        let context = CotabbyTestFixtures.focusedInputContext(
+            role: "ClaudeCodeTuiInput",
+            subrole: "OCR",
+            precedingText: "explain this fu"
+        )
+        let settings = CotabbyTestFixtures.settingsSnapshot()
+
+        let result = SuggestionRequestFactory.buildRequest(
+            context: context,
+            settings: settings,
+            configuration: .standard
+        )
+
+        XCTAssertTrue(result.request.prompt.hasSuffix("explain this fu"))
+        XCTAssertTrue(result.request.prompt.contains("coding assistant"))
+    }
+
+    func test_buildRequest_axRole_keepsBasePersonaPrompt() {
+        let context = CotabbyTestFixtures.focusedInputContext(
+            role: "AXTextArea",
+            precedingText: "Hello wor"
+        )
+        let settings = CotabbyTestFixtures.settingsSnapshot(userName: "Tamim")
+
+        let result = SuggestionRequestFactory.buildRequest(
+            context: context,
+            settings: settings,
+            configuration: .standard
+        )
+
+        XCTAssertTrue(result.request.prompt.contains("Written by Tamim."))
+        XCTAssertTrue(result.request.prompt.hasSuffix("Hello wor"))
+    }
 }

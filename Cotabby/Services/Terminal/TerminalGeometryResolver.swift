@@ -84,21 +84,6 @@ enum TerminalGeometryResolver {
         )
     }
 
-    /// Produces a fallback caret rect when row/column are unavailable. Anchors to a conservative
-    /// position near the bottom of the terminal window (where the prompt typically lives).
-    static func fallbackCursorRect(windowFrame: CGRect) -> CGRect {
-        let bottomInset: CGFloat = 40
-        let leftInset: CGFloat = 20
-        let cellHeight: CGFloat = defaultCellMetrics.cellHeight
-
-        return CGRect(
-            x: windowFrame.minX + leftInset,
-            y: windowFrame.maxY - bottomInset,
-            width: defaultCellMetrics.cellWidth,
-            height: cellHeight
-        )
-    }
-
     /// Enriches a `TerminalFocusSnapshot` with window geometry and estimated cursor position.
     ///
     /// The `TerminalIntegrationService` calls this to add geometry data before publishing
@@ -115,12 +100,26 @@ enum TerminalGeometryResolver {
             return snapshot
         }
 
-        let cursorRect: CGRect
+        // Only genuine row/col reports produce a cursor estimate. The old fallbackCursorRect
+        // guess ("near the bottom of the window") is deliberately NOT used here anymore: it
+        // painted ghost text over unrelated content at the window's bottom-left in every
+        // terminal. With no estimate the adapter yields a zero caret, the overlay stays hidden,
+        // and the OCR prompt anchor (ShellPromptGeometryCoordinator) supplies the real position
+        // moments later via re-injection.
+        let cursorPosition: CGPoint?
         if let row = snapshot.cursorRow, let col = snapshot.cursorColumn {
-            cursorRect = estimatedCursorRect(windowFrame: frame, row: row, column: col)
+            // The pure rect math works in the AX window frame's CG (top-left) space, but the
+            // overlay consumes snapshot geometry as AppKit bottom-left screen points with no
+            // conversion of its own (the AX pipeline converts at the source via AXHelper, and
+            // so must this path). Convert once here, at the service boundary, so the pure
+            // helpers and their tests keep their CG semantics.
+            let cursorRect = estimatedCursorRect(windowFrame: frame, row: row, column: col)
+            let cocoaCursorRect = AXHelper.cocoaRect(fromAccessibilityRect: cursorRect)
+            cursorPosition = CGPoint(x: cocoaCursorRect.midX, y: cocoaCursorRect.midY)
         } else {
-            cursorRect = fallbackCursorRect(windowFrame: frame)
+            cursorPosition = nil
         }
+        let cocoaFrame = AXHelper.cocoaRect(fromAccessibilityRect: frame)
 
         return TerminalFocusSnapshot(
             commandBuffer: snapshot.commandBuffer,
@@ -128,11 +127,14 @@ enum TerminalGeometryResolver {
             shellType: snapshot.shellType,
             terminalBundleIdentifier: snapshot.terminalBundleIdentifier,
             shellPid: snapshot.shellPid,
-            terminalWindowFrame: frame,
-            estimatedCursorPosition: CGPoint(x: cursorRect.midX, y: cursorRect.midY),
+            terminalWindowFrame: cocoaFrame,
+            estimatedCursorPosition: cursorPosition,
             cursorRow: snapshot.cursorRow,
             cursorColumn: snapshot.cursorColumn,
-            timestamp: snapshot.timestamp
+            timestamp: snapshot.timestamp,
+            estimatedCursorRect: snapshot.estimatedCursorRect,
+            promptLineRect: snapshot.promptLineRect,
+            observedCellWidth: snapshot.observedCellWidth
         )
     }
 

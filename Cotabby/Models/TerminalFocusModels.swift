@@ -30,6 +30,11 @@ struct TerminalIpcMessage: Codable, Equatable, Sendable {
         case buffer
         /// The shell session is ending (user typed `exit`, closed the tab, etc.).
         case disconnect
+        /// Ask Cotabby to accept the currently visible suggestion. Honored only when the app was
+        /// launched with `-cotabby-debug` — it exists so the E2E harness can exercise the real
+        /// acceptance path (session validation → clipboard paste) without a hardware keystroke,
+        /// which CGEvent taps cannot receive from test automation on modern macOS.
+        case accept
     }
 
     let type: MessageType
@@ -79,6 +84,108 @@ struct TerminalFocusSnapshot: Equatable, Sendable {
     let cursorColumn: Int?
     /// When this snapshot was created.
     let timestamp: Date
+    /// OCR-anchored caret cell (AppKit bottom-left screen coords). When present this is the
+    /// authoritative caret — unlike `estimatedCursorPosition` it is calibrated against the
+    /// actual on-screen prompt line, not a fixed-inset guess.
+    let estimatedCursorRect: CGRect?
+    /// The prompt LINE rect (full pane width, one cell tall, AppKit coords). Feeds the overlay's
+    /// `inputFrameRect` so ghost text wraps at the pane's right edge and continuation lines
+    /// land one row below — handing the whole window frame here makes wraps span the window.
+    let promptLineRect: CGRect?
+    /// Per-character cell width calibrated from the OCR'd prompt line (`boxWidth / charCount`).
+    /// Nil falls back to `TerminalGeometryResolver.defaultCellMetrics`.
+    let observedCellWidth: CGFloat?
+
+    init(
+        commandBuffer: String,
+        cursorOffset: Int,
+        shellType: ShellType,
+        terminalBundleIdentifier: String,
+        shellPid: Int32,
+        terminalWindowFrame: CGRect?,
+        estimatedCursorPosition: CGPoint?,
+        cursorRow: Int?,
+        cursorColumn: Int?,
+        timestamp: Date,
+        estimatedCursorRect: CGRect? = nil,
+        promptLineRect: CGRect? = nil,
+        observedCellWidth: CGFloat? = nil
+    ) {
+        self.commandBuffer = commandBuffer
+        self.cursorOffset = cursorOffset
+        self.shellType = shellType
+        self.terminalBundleIdentifier = terminalBundleIdentifier
+        self.shellPid = shellPid
+        self.terminalWindowFrame = terminalWindowFrame
+        self.estimatedCursorPosition = estimatedCursorPosition
+        self.cursorRow = cursorRow
+        self.cursorColumn = cursorColumn
+        self.timestamp = timestamp
+        self.estimatedCursorRect = estimatedCursorRect
+        self.promptLineRect = promptLineRect
+        self.observedCellWidth = observedCellWidth
+    }
+
+    /// Copy reflecting text Cotabby itself just pasted at the cursor — the optimistic local
+    /// echo. Bracketed paste is INVISIBLE to the shell hooks (they report on real keystrokes
+    /// only), so without this the live snapshot goes stale after every acceptance: the
+    /// whitespace reconciler reads a pre-paste trailing space and strips legitimate
+    /// separators ("git pull" + " origin" → "git pullorigin"), and the post-accept ghost
+    /// positions against the pre-paste caret. The shell's next real report overwrites this
+    /// with ground truth.
+    ///
+    /// Offset semantics follow the shell: bash reports BYTE offsets (READLINE_POINT), zsh and
+    /// fish report character offsets — the inserted length must advance in the same unit.
+    func appendingInsertedText(_ insertedText: String) -> TerminalFocusSnapshot {
+        let newBuffer = precedingText + insertedText + trailingText
+        let advance: Int
+        switch shellType {
+        case .bash:
+            advance = insertedText.utf8.count
+        case .zsh, .fish:
+            advance = insertedText.count
+        }
+        return TerminalFocusSnapshot(
+            commandBuffer: newBuffer,
+            cursorOffset: cursorOffset + advance,
+            shellType: shellType,
+            terminalBundleIdentifier: terminalBundleIdentifier,
+            shellPid: shellPid,
+            terminalWindowFrame: terminalWindowFrame,
+            estimatedCursorPosition: estimatedCursorPosition,
+            cursorRow: cursorRow,
+            cursorColumn: cursorColumn,
+            timestamp: Date(),
+            estimatedCursorRect: estimatedCursorRect,
+            promptLineRect: promptLineRect,
+            observedCellWidth: observedCellWidth
+        )
+    }
+
+    /// Copy with OCR-anchored geometry attached. The environment's snapshot-update closure uses
+    /// this so it doesn't hand-copy every field when the prompt anchor resolves.
+    func withGeometry(
+        windowFrame: CGRect?,
+        cursorRect: CGRect,
+        promptLineRect: CGRect,
+        observedCellWidth: CGFloat
+    ) -> TerminalFocusSnapshot {
+        TerminalFocusSnapshot(
+            commandBuffer: commandBuffer,
+            cursorOffset: cursorOffset,
+            shellType: shellType,
+            terminalBundleIdentifier: terminalBundleIdentifier,
+            shellPid: shellPid,
+            terminalWindowFrame: windowFrame ?? terminalWindowFrame,
+            estimatedCursorPosition: estimatedCursorPosition,
+            cursorRow: cursorRow,
+            cursorColumn: cursorColumn,
+            timestamp: timestamp,
+            estimatedCursorRect: cursorRect,
+            promptLineRect: promptLineRect,
+            observedCellWidth: observedCellWidth
+        )
+    }
 
     /// Text before the cursor — the "preceding text" that the suggestion engine uses as context.
     var precedingText: String {
@@ -113,7 +220,9 @@ struct TerminalFocusSnapshot: Equatable, Sendable {
 /// are keyed by PID and expire when the socket disconnects or a heartbeat timeout fires.
 struct TerminalSession: Equatable, Sendable {
     let shellPid: Int32
-    let shellType: ShellType
+    /// Mutable because `exec bash` / `exec fish` replaces the shell IMAGE but keeps the PID —
+    /// the session survives the swap and must follow the shell actually reporting.
+    var shellType: ShellType
     let terminalBundleIdentifier: String
     let connectedAt: Date
     var lastMessageAt: Date

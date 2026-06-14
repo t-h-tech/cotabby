@@ -41,10 +41,11 @@ enum TerminalFocusAdapter {
             role: "TerminalShellInput",
             subrole: snapshot.shellType.rawValue,
             caretRect: caretRect,
-            inputFrameRect: snapshot.terminalWindowFrame,
+            inputFrameRect: snapshot.promptLineRect ?? snapshot.terminalWindowFrame,
             caretSource: "TerminalShellIntegration",
             caretQuality: .estimated,
-            observedCharWidth: TerminalGeometryResolver.defaultCellMetrics.cellWidth,
+            observedCharWidth: snapshot.observedCellWidth
+                ?? TerminalGeometryResolver.defaultCellMetrics.cellWidth,
             precedingText: precedingText(
                 from: snapshot.commandBuffer,
                 cursorOffset: cursorCharacterOffset
@@ -61,9 +62,18 @@ enum TerminalFocusAdapter {
 
     // MARK: - Private
 
-    /// Resolves the caret rect from the snapshot's geometry data, falling back to a default
-    /// off-screen rect if no geometry is available.
+    /// Resolves the caret rect from the snapshot's geometry data.
+    ///
+    /// Only ANCHORED geometry produces a caret: the OCR-calibrated rect, or a cursor position
+    /// computed from shell-reported row/col. The old "near the bottom of the window" guess is
+    /// deliberately gone — it painted ghost text over unrelated screen content at the window's
+    /// bottom-left (observed in every terminal), which is strictly worse than briefly showing
+    /// nothing while the prompt anchor resolves (~250–400 ms after the first keystroke).
     private static func resolveCaret(from snapshot: TerminalFocusSnapshot) -> CGRect {
+        if let anchored = snapshot.estimatedCursorRect {
+            return anchored
+        }
+
         if let cursorPos = snapshot.estimatedCursorPosition {
             let metrics = TerminalGeometryResolver.defaultCellMetrics
             return CGRect(
@@ -74,12 +84,9 @@ enum TerminalFocusAdapter {
             )
         }
 
-        if let windowFrame = snapshot.terminalWindowFrame {
-            return TerminalGeometryResolver.fallbackCursorRect(windowFrame: windowFrame)
-        }
-
-        // No geometry at all — return a zero rect. The overlay system will not display
-        // when the caret rect is zero-sized.
+        // No anchored geometry — return a zero rect. The overlay system will not display
+        // when the caret rect is zero-sized; generation still runs so the suggestion is
+        // ready the moment the anchor lands and the snapshot is re-injected.
         return .zero
     }
 

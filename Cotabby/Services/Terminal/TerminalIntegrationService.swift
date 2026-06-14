@@ -9,12 +9,21 @@ import Logging
 ///
 /// The socket lives at `~/Library/Application Support/Cotabby/terminal.sock` with owner-only
 /// permissions (0600) so other users on the system cannot inject fake shell state.
+///
+/// **Wire format / transport.** The hooks in `scripts/shell-integration/` connect with
+/// `/usr/bin/nc -U <socket>` (BSD netcat — present on every macOS install, no `brew install
+/// socat` required) and write one JSON object per line. The server reads newline-delimited
+/// records and decodes each one as `TerminalIpcMessage`. If you change the framing, the
+/// transport line in `cotabby.zsh` / `cotabby.bash` / `cotabby.fish` must change in lockstep.
 @MainActor
 final class TerminalIntegrationService {
     /// Called on the main actor whenever a terminal session publishes a new focus snapshot.
     var onSnapshotUpdate: ((TerminalFocusSnapshot) -> Void)?
     /// Called when a session connects or disconnects, so the availability evaluator can re-check.
     var onSessionChange: (() -> Void)?
+    /// Called when an `.accept` IPC message arrives. The environment gates this on
+    /// `CotabbyDebugOptions.isEnabled` — see `TerminalIpcMessage.MessageType.accept`.
+    var onAcceptRequest: (() -> Void)?
 
     private(set) var sessions: [Int32: TerminalSession] = [:]
 
@@ -23,9 +32,6 @@ final class TerminalIntegrationService {
     private var acceptSource: DispatchSourceRead?
     private var clientSources: [Int32: DispatchSourceRead] = [:]
     private var readBuffers: [Int32: Data] = [:]
-
-    /// How long a session can go without a message before it is considered stale and removed.
-    private static let sessionTimeoutSeconds: TimeInterval = 30
 
     private var socketPath: String {
         let appSupport = FileManager.default.urls(
@@ -159,6 +165,23 @@ final class TerminalIntegrationService {
         sessions[pid]?.latestSnapshot
     }
 
+    /// Applies an optimistic local echo for text Cotabby itself just pasted into the shell.
+    /// Bracketed paste never reaches the per-keystroke hooks, so without this the session's
+    /// snapshot stays pre-paste until the user's next REAL keystroke — long enough for the
+    /// acceptance whitespace reconciler and the ghost position to act on stale text. The
+    /// updated snapshot flows through `onSnapshotUpdate` exactly like a hook report; the
+    /// shell's next real report replaces it with ground truth.
+    func applyOptimisticInsertion(shellPid: Int32, insertedText: String) {
+        guard !insertedText.isEmpty,
+              var session = sessions[shellPid],
+              let snapshot = session.latestSnapshot else { return }
+        let echoed = snapshot.appendingInsertedText(insertedText)
+        session.latestSnapshot = echoed
+        session.lastMessageAt = Date()
+        sessions[shellPid] = session
+        onSnapshotUpdate?(echoed)
+    }
+
     // MARK: - Connection handling
 
     private func acceptConnection() {
@@ -219,6 +242,9 @@ final class TerminalIntegrationService {
             handleBufferMessage(message, fromFd: fd)
         case .disconnect:
             handleDisconnectMessage(message, fromFd: fd)
+        case .accept:
+            logger.debug("Accept request received over terminal IPC")
+            onAcceptRequest?()
         }
     }
 
@@ -261,6 +287,13 @@ final class TerminalIntegrationService {
         } else {
             sessions[pid]?.lastMessageAt = now
             sessions[pid]?.latestSnapshot = snapshot
+            // `exec <other-shell>` keeps the PID, so a same-pid report can legitimately arrive
+            // from a different shell. Follow it — a stale shellType mislabels every downstream
+            // prompt and hides the switch from diagnostics.
+            if let previous = sessions[pid]?.shellType, previous != shell {
+                sessions[pid]?.shellType = shell
+                logger.info("Terminal session switched shell: pid=\(pid), \(previous.rawValue) → \(shell.rawValue)")
+            }
         }
 
         onSnapshotUpdate?(snapshot)
@@ -286,17 +319,23 @@ final class TerminalIntegrationService {
 
     // MARK: - Stale session cleanup
 
-    /// Removes sessions that have not sent a message within the timeout window.
+    /// Removes sessions whose shell process no longer exists.
     /// Called periodically from the app's main polling loop.
+    ///
+    /// Liveness, not message recency: a shell suspended under a full-screen TUI (Claude Code
+    /// owning the tty) goes silent for arbitrarily long while remaining the session the user
+    /// will return to — and "this app has a live shell session" now drives shell-surface
+    /// behavior (terminal accept key, inline rendering) in embedded-terminal hosts like
+    /// VS Code, so silence-based pruning would flip those behaviors off after 30 quiet
+    /// seconds. `kill(pid, 0)` probes existence without signaling; EPERM still means alive.
     func pruneStaleSessionsIfNeeded() {
-        let cutoff = Date().addingTimeInterval(-Self.sessionTimeoutSeconds)
-        let stale = sessions.filter { $0.value.lastMessageAt < cutoff }
+        let dead = sessions.filter { kill($0.value.shellPid, 0) != 0 && errno == ESRCH }
 
-        guard !stale.isEmpty else { return }
+        guard !dead.isEmpty else { return }
 
-        for (pid, _) in stale {
+        for (pid, _) in dead {
             sessions.removeValue(forKey: pid)
-            logger.info("Pruned stale terminal session: pid=\(pid)")
+            logger.info("Pruned dead terminal session: pid=\(pid)")
         }
         onSessionChange?()
     }

@@ -6,6 +6,15 @@ import Foundation
 ///
 /// The value of this helper is consistency: permission/focus checks appear in several coordinator
 /// paths, and moving them here prevents small wording or branching differences from creeping in.
+///
+/// **Active-input-source precedence (Sub-plan D).** When the frontmost app is a terminal, the
+/// `terminalIntegrationActive` parameter means "*any* terminal-source is live for this app":
+///   1. **Claude Code TUI** (OCR-driven) — wins while Claude Code is foreground.
+///   2. **Shell-prompt** (shell-integration hooks) — wins at the bare shell prompt.
+/// Both paths inject through `FocusTrackingModel.injectTerminalSnapshot`, so the caller is
+/// responsible for OR-ing the two signals before passing them in. The evaluator does not pick
+/// between sources — the `FocusSnapshot.context.role` already records which adapter produced
+/// the snapshot (`TerminalShellInput` vs. `ClaudeCodeTuiInput`).
 enum SuggestionAvailabilityEvaluator {
     static func disabledReason(
         globallyEnabled: Bool = true,

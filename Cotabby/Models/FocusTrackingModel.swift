@@ -22,6 +22,11 @@ final class FocusTrackingModel: ObservableObject {
     /// to a different app (the AX poll reports a different bundle ID).
     private var terminalInjectedBundleIdentifier: String?
 
+    /// Fired when a supported AX snapshot reclaims focus from a terminal injection inside an
+    /// embedded-terminal host (see `onSnapshotChange`). The environment uses it to flip
+    /// `SuggestionInserter.isTerminalMode` back off — this model must not know the inserter.
+    var onTerminalInjectionReclaimed: (() -> Void)?
+
     init(
         permissionProvider: @escaping @MainActor () -> Bool,
         ignoredBundleIdentifier: String?,
@@ -46,11 +51,23 @@ final class FocusTrackingModel: ObservableObject {
             // the polled snapshot would always be .unsupported and would kill the suggestion.
             if let terminalBid = self.terminalInjectedBundleIdentifier {
                 if snapshot.bundleIdentifier == terminalBid {
-                    // Same terminal still focused — keep the terminal-injected snapshot.
-                    return
+                    // Embedded-terminal hosts own real AX text fields in the SAME bundle
+                    // (VS Code's editor, search, Cmd+P). A .supported poll there means the
+                    // user left the terminal pane for one of them — it must reclaim focus,
+                    // or the editor starves until the next app switch. Dedicated terminals
+                    // never produce .supported polls (see comment above), so they cannot
+                    // be stolen from by this branch.
+                    guard TerminalAppDetector.hostsEmbeddedTerminal(bundleIdentifier: terminalBid),
+                          snapshot.capability == .supported else {
+                        // Same terminal still focused — keep the terminal-injected snapshot.
+                        return
+                    }
+                    self.terminalInjectedBundleIdentifier = nil
+                    self.onTerminalInjectionReclaimed?()
+                } else {
+                    // User switched away from the terminal — resume normal AX polling.
+                    self.terminalInjectedBundleIdentifier = nil
                 }
-                // User switched away from the terminal — resume normal AX polling.
-                self.terminalInjectedBundleIdentifier = nil
             }
             self.snapshot = snapshot
             self.updateLatestExternalApplication(from: snapshot)
@@ -106,6 +123,12 @@ final class FocusTrackingModel: ObservableObject {
     /// Called when a terminal shell integration session disconnects.
     func clearTerminalInjection() {
         terminalInjectedBundleIdentifier = nil
+        // Restore the tracker's real AX state immediately. The tracker only republishes on
+        // CHANGE, and for an AX-dead terminal its stored snapshot is identical before and
+        // after the injection — without this the published (injected) snapshot would outlive
+        // the injection until the user happens to change AX focus.
+        snapshot = tracker.snapshot
+        updateLatestExternalApplication(from: tracker.snapshot)
     }
 
     /// The menu bar needs a compact status string, not the full diagnostic reason.

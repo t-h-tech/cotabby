@@ -311,4 +311,72 @@ final class GhostSuggestionLayoutTests: XCTestCase {
             "Should start below caret when left budget is too small for RTL"
         )
     }
+
+    // MARK: - Terminal-grid surfaces (one-line-tall, full-width input frame)
+
+    func test_make_oneLineTallInputFrameWrapsOverflowBelowCaretLine() {
+        // Terminal prompt-line geometry: the input frame is the prompt LINE — full pane width,
+        // one cell tall — and the caret sits mid-line. Overflow must wrap to lines that render
+        // BELOW the caret line, left-aligned at the pane's left edge (leadingIndent 0).
+        let caretRect = CGRect(x: 400, y: 300, width: 8, height: 17)
+        let geometry = CotabbyTestFixtures.overlayGeometry(
+            caretRect: caretRect,
+            inputFrameRect: CGRect(x: 20, y: 300, width: 760, height: 17),
+            caretQuality: .estimated,
+            observedCharWidth: 8,
+            usesMonospacedFont: true
+        )
+
+        let layout = GhostSuggestionLayout.make(
+            text: " checkout -b feature/terminal-shell-integration && git push --set-upstream origin",
+            geometry: geometry,
+            fontSize: 13,
+            visibleFrame: CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        )
+
+        XCTAssertGreaterThan(layout.lines.count, 1, "Long suggestion should wrap")
+        XCTAssertEqual(layout.topLineCenterOffsetFromCaret, 0, "First line stays on the caret line")
+        for line in layout.lines.dropFirst() {
+            XCTAssertEqual(line.leadingIndent, 0, "Continuation lines start at the pane's left edge")
+        }
+
+        // The panel's top edge must sit at the caret line; every additional line extends the
+        // panel DOWNWARD on screen (smaller y in AppKit coords).
+        let contentSize = CGSize(
+            width: 760,
+            height: CGFloat(layout.lines.count) * layout.lineHeight
+        )
+        let frame = layout.panelFrame(for: contentSize, caretRect: caretRect)
+        XCTAssertEqual(
+            frame.maxY, caretRect.midY + layout.lineHeight / 2, accuracy: 0.5,
+            "Top line should be centered on the caret line"
+        )
+        XCTAssertLessThan(
+            frame.minY, caretRect.minY,
+            "Wrapped lines must extend below the caret line, not above"
+        )
+    }
+
+    func test_make_monospacedBudgetsWithObservedCellWidth() {
+        // 40 chars * 8pt cell = 320pt text. First-line budget from caret 400 to frame right edge
+        // 772 (minus padding 8 and keycap 36) = 322pt — fits exactly one line. A proportional
+        // measurement would disagree; the observedCharWidth short-circuit must dominate.
+        let geometry = CotabbyTestFixtures.overlayGeometry(
+            caretRect: CGRect(x: 400, y: 300, width: 8, height: 17),
+            inputFrameRect: CGRect(x: 20, y: 300, width: 760, height: 17),
+            caretQuality: .estimated,
+            observedCharWidth: 8,
+            usesMonospacedFont: true
+        )
+
+        let fits40 = String(repeating: "a", count: 40)
+        let layout = GhostSuggestionLayout.make(
+            text: fits40,
+            geometry: geometry,
+            fontSize: 13,
+            visibleFrame: CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        )
+
+        XCTAssertEqual(layout.lines.count, 1, "40 cells * 8pt = 320pt fits the 322pt budget")
+    }
 }

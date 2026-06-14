@@ -153,7 +153,11 @@ final class TerminalFocusAdapterTests: XCTestCase {
         XCTAssertEqual(adapted.caretRect.height, metrics.cellHeight, accuracy: 0.01)
     }
 
-    func test_caretRect_fallsBackToWindowFrameBottom() {
+    func test_caretRect_zeroWhenOnlyWindowFrameIsKnown() {
+        // A window frame alone is NOT a caret anchor. The old behavior fabricated a
+        // bottom-left guess here, which painted ghost text over unrelated screen content;
+        // suppression (zero caret → overlay hidden) is the contract now, with the OCR
+        // prompt anchor supplying the real position via re-injection moments later.
         let windowFrame = CGRect(x: 0, y: 0, width: 800, height: 600)
         let snapshot = makeSnapshot(
             terminalWindowFrame: windowFrame,
@@ -162,8 +166,7 @@ final class TerminalFocusAdapterTests: XCTestCase {
 
         let adapted = TerminalFocusAdapter.adapt(snapshot, focusChangeSequence: 1)
 
-        // Fallback should be near the bottom of the window.
-        XCTAssertGreaterThan(adapted.caretRect.origin.y, windowFrame.midY)
+        XCTAssertEqual(adapted.caretRect, .zero)
     }
 
     func test_caretRect_zeroWhenNoGeometry() {

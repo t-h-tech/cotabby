@@ -6,7 +6,7 @@
 #
 # Prerequisites:
 #   - Cotabby is running (socket must exist)
-#   - socat is installed (brew install socat)
+#   - /usr/bin/nc (BSD netcat) — ships with macOS; no extra install needed.
 #
 # Usage:
 #   bash scripts/test-terminal-integration.sh
@@ -38,14 +38,20 @@ echo ""
 # ──────────────────────────────────────────────
 echo "--- Prerequisites ---"
 
-if command -v socat &>/dev/null; then
-    pass "socat is installed ($(command -v socat))"
+NC=/usr/bin/nc
+if [[ -x "$NC" ]]; then
+    pass "BSD netcat present at $NC"
 else
-    fail "socat is not installed. Run: brew install socat"
+    fail "/usr/bin/nc not found — terminal integration cannot work without it."
     echo ""
-    echo "Cannot continue without socat."
+    echo "Cannot continue without /usr/bin/nc."
     exit 1
 fi
+
+# Helper that mirrors the shell hooks' transport line, so the tests exercise the same path.
+cotabby_send() {
+    printf '%s\n' "$1" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
+}
 
 if [[ -S "$SOCKET" ]]; then
     pass "Socket exists at $SOCKET"
@@ -75,6 +81,12 @@ else
     fail "cotabby.zsh not found at $SHELL_HOOKS_DIR/cotabby.zsh"
 fi
 
+if [[ -f "$SHELL_HOOKS_DIR/cotabby.fish" ]]; then
+    pass "cotabby.fish found"
+else
+    fail "cotabby.fish not found at $SHELL_HOOKS_DIR/cotabby.fish"
+fi
+
 # ──────────────────────────────────────────────
 # Phase 1: Socket IPC
 # ──────────────────────────────────────────────
@@ -83,7 +95,7 @@ echo "--- Phase 1: Socket IPC ---"
 
 # Test: Valid buffer message
 MSG='{"type":"buffer","text":"git commit -m ","cursor":14,"shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99901}'
-if echo "$MSG" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null; then
+if echo "$MSG" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null; then
     pass "Valid buffer message accepted"
 else
     fail "Valid buffer message rejected"
@@ -92,7 +104,7 @@ sleep 0.2
 
 # Test: Updated buffer (same PID = same session)
 MSG='{"type":"buffer","text":"git commit -m \"fix\"","cursor":19,"shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99901}'
-if echo "$MSG" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null; then
+if echo "$MSG" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null; then
     pass "Updated buffer message accepted"
 else
     fail "Updated buffer message rejected"
@@ -101,7 +113,7 @@ sleep 0.1
 
 # Test: Disconnect
 MSG='{"type":"disconnect","shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99901}'
-if echo "$MSG" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null; then
+if echo "$MSG" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null; then
     pass "Disconnect message accepted"
 else
     fail "Disconnect message rejected"
@@ -109,14 +121,14 @@ fi
 sleep 0.1
 
 # Test: Malformed JSON
-if echo "not valid json{{{" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null; then
+if echo "not valid json{{{" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null; then
     pass "Malformed JSON handled (connection accepted)"
 else
     pass "Malformed JSON handled (connection closed gracefully)"
 fi
 
 # Test: Empty line
-if echo "" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null; then
+if echo "" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null; then
     pass "Empty message handled (connection accepted)"
 else
     pass "Empty message handled (connection closed gracefully)"
@@ -124,7 +136,7 @@ fi
 
 # Test: Message with special characters
 MSG='{"type":"buffer","text":"echo \"hello\\nworld\"","cursor":20,"shell":"bash","terminal":"com.apple.Terminal","pid":99902}'
-if echo "$MSG" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null; then
+if echo "$MSG" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null; then
     pass "Message with escaped characters accepted"
 else
     fail "Message with escaped characters rejected"
@@ -133,7 +145,7 @@ sleep 0.1
 
 # Clean up test session
 echo '{"type":"disconnect","shell":"bash","terminal":"com.apple.Terminal","pid":99902}' \
-  | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+  | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 
 # ──────────────────────────────────────────────
 # Phase 2: Shell Hook Scripts
@@ -152,6 +164,18 @@ if zsh -n "$SHELL_HOOKS_DIR/cotabby.zsh" 2>/dev/null; then
     pass "cotabby.zsh syntax is valid"
 else
     fail "cotabby.zsh has syntax errors"
+fi
+
+# fish syntax check — gated on `fish` being installed; CI machines without fish skip rather
+# than fail, since fish is opt-in for end users.
+if command -v fish &>/dev/null; then
+    if fish -n "$SHELL_HOOKS_DIR/cotabby.fish" 2>/dev/null; then
+        pass "cotabby.fish syntax is valid"
+    else
+        fail "cotabby.fish has syntax errors"
+    fi
+else
+    skip "fish not installed — skipping cotabby.fish syntax check"
 fi
 
 # Terminal detection: Ghostty via TERM_PROGRAM
@@ -236,7 +260,7 @@ echo "--- Phase 3: Focus Bridge (simulated) ---"
 
 # Start a session and check if the pipeline processes it
 MSG='{"type":"buffer","text":"docker build ","cursor":13,"shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99903}'
-echo "$MSG" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+echo "$MSG" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 sleep 0.5
 
 # The suggestion file is created when the pipeline processes terminal input
@@ -249,7 +273,7 @@ fi
 
 # Clean up
 echo '{"type":"disconnect","shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99903}' \
-  | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+  | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 sleep 0.2
 
 # ──────────────────────────────────────────────
@@ -262,18 +286,18 @@ echo "--- Phase 4: Multiple Sessions ---"
 MSG1='{"type":"buffer","text":"ls -la","cursor":5,"shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99904}'
 MSG2='{"type":"buffer","text":"npm install","cursor":11,"shell":"bash","terminal":"com.microsoft.VSCode","pid":99905}'
 
-echo "$MSG1" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
-echo "$MSG2" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+echo "$MSG1" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
+echo "$MSG2" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 sleep 0.1
 pass "Two concurrent sessions sent without error"
 
 # Disconnect one, update the other
 echo '{"type":"disconnect","shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99904}' \
-  | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+  | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 sleep 0.1
 
 MSG2_UPDATE='{"type":"buffer","text":"npm install express","cursor":19,"shell":"bash","terminal":"com.microsoft.VSCode","pid":99905}'
-if echo "$MSG2_UPDATE" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null; then
+if echo "$MSG2_UPDATE" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null; then
     pass "Remaining session accepts updates after peer disconnects"
 else
     fail "Remaining session could not receive updates"
@@ -281,7 +305,7 @@ fi
 
 # Clean up
 echo '{"type":"disconnect","shell":"bash","terminal":"com.microsoft.VSCode","pid":99905}' \
-  | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+  | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 
 # ──────────────────────────────────────────────
 # Phase 5: Stress Test
@@ -291,13 +315,13 @@ echo "--- Phase 5: Rapid Message Stress Test ---"
 
 for i in $(seq 1 50); do
     MSG="{\"type\":\"buffer\",\"text\":\"test command $i\",\"cursor\":$((14 + ${#i})),\"shell\":\"zsh\",\"terminal\":\"com.mitchellh.ghostty\",\"pid\":99906}"
-    echo "$MSG" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+    echo "$MSG" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 done
 sleep 0.5
 
 # Verify socket still accepts connections after the burst
 MSG='{"type":"buffer","text":"post-stress","cursor":11,"shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99907}'
-if echo "$MSG" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null; then
+if echo "$MSG" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null; then
     pass "Socket server survived 50 rapid messages"
 else
     fail "Socket server stopped accepting connections after stress test"
@@ -305,9 +329,9 @@ fi
 
 # Clean up
 echo '{"type":"disconnect","shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99906}' \
-  | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+  | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 echo '{"type":"disconnect","shell":"zsh","terminal":"com.mitchellh.ghostty","pid":99907}' \
-  | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+  | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 
 # ──────────────────────────────────────────────
 # Phase 6: Per-App Bundle ID Acceptance
@@ -321,14 +345,14 @@ check_terminal_app() {
     local test_pid="$3"
 
     MSG="{\"type\":\"buffer\",\"text\":\"echo hello from $name\",\"cursor\":$((17 + ${#name})),\"shell\":\"zsh\",\"terminal\":\"$bundle_id\",\"pid\":$test_pid}"
-    if echo "$MSG" | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null; then
+    if echo "$MSG" | "$NC" -U -w 1 "$SOCKET" 2>/dev/null; then
         pass "$name ($bundle_id): message accepted"
     else
         fail "$name ($bundle_id): message rejected"
     fi
     sleep 0.1
     echo "{\"type\":\"disconnect\",\"shell\":\"zsh\",\"terminal\":\"$bundle_id\",\"pid\":$test_pid}" \
-      | socat - "UNIX-CONNECT:${SOCKET}" 2>/dev/null
+      | "$NC" -U -w 1 "$SOCKET" 2>/dev/null
 }
 
 check_terminal_app "Ghostty"        "com.mitchellh.ghostty"    99910

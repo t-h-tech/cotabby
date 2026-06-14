@@ -32,12 +32,32 @@ enum TerminalAppDetector {
         "io.rio.terminal"
     ]
 
+    /// Apps that are not terminals themselves but EMBED one (integrated terminal panes).
+    /// These get shell-surface treatment — terminal accept key, inline ghost rendering —
+    /// only while one of their shells holds a live integration session, because unlike a
+    /// dedicated terminal the user is usually typing in an editor pane, not a shell.
+    private static let embeddedTerminalHostBundleIdentifiers: Set<String> = [
+        "com.microsoft.VSCode",
+        "com.microsoft.VSCodeInsiders",
+        "com.todesktop.230313mzl4w4u92", // Cursor
+        "dev.zed.Zed",
+        "com.jetbrains.intellij"
+    ]
+
     /// Returns true if the bundle identifier belongs to a known terminal emulator.
     ///
     /// This is the original check, preserved for call sites that only need a binary answer.
     static func isTerminal(bundleIdentifier: String?) -> Bool {
         guard let bundleIdentifier else { return false }
         return terminalBundleIdentifiers.contains(bundleIdentifier)
+    }
+
+    /// Returns true if the app hosts an embedded terminal (see
+    /// `embeddedTerminalHostBundleIdentifiers`). Callers combine this with "does this app
+    /// currently have a live shell-integration session" to decide shell-surface behavior.
+    static func hostsEmbeddedTerminal(bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return false }
+        return embeddedTerminalHostBundleIdentifiers.contains(bundleIdentifier)
     }
 
     /// Classifies how Cotabby should handle the given app, taking shell integration state

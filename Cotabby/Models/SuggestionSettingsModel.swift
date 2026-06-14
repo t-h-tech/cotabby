@@ -4,16 +4,21 @@ import Foundation
 
 /// Identifies one of the three user-configurable keyboard shortcuts so the recorder can ask which
 /// other action (if any) already owns a proposed key combination before committing it.
-enum ShortcutAction: CaseIterable {
+enum ShortcutAction: CaseIterable, Equatable, Hashable {
     case acceptWord
     case acceptEntireSuggestion
     case toggleTabby
+    /// Accept key on shell surfaces (terminals, embedded-terminal hosts with a live shell, and
+    /// TUIs like Claude Code running inside them). A separate binding from `acceptWord` because
+    /// Tab — the natural global accept — belongs to shell completion inside a terminal.
+    case terminalAccept
 
     var displayName: String {
         switch self {
         case .acceptWord: return "Accept Word"
         case .acceptEntireSuggestion: return "Accept Entire Suggestion"
         case .toggleTabby: return "Toggle Tabby"
+        case .terminalAccept: return "Terminal Accept"
         }
     }
 }
@@ -84,6 +89,17 @@ final class SuggestionSettingsModel: ObservableObject {
     @Published private(set) var terminalAcceptanceKeyCode: CGKeyCode
     @Published private(set) var terminalAcceptanceKeyModifiers: ShortcutModifierMask
     @Published private(set) var terminalAcceptanceKeyLabel: String
+    /// Whether the experimental Claude Code TUI (screenshot+OCR) pipeline is enabled. Off by
+    /// default until the spike's latency/accuracy gate
+    /// (`docs/plan-terminal-claude-code-and-per-app-shortcuts.md` Sub-plan C.2) is met across the
+    /// QA matrix. Surfaced as "Claude Code (beta)" in the Advanced pane.
+    @Published private(set) var isClaudeCodeTuiExperimentEnabled: Bool
+    /// Per-app accept-key overrides keyed by bundle identifier. When the frontmost app has a
+    /// matching entry, `ShortcutResolver` returns that binding; otherwise it falls back to the
+    /// global accept binding above. Mutated only through `setPerAppAcceptKey` /
+    /// `setPerAppFullAcceptKey` / `clearPerApp...` / `removePerAppOverride` so the array stays
+    /// deduped by bundle identifier and the store never holds empty no-op rows.
+    @Published private(set) var perAppShortcutOverrides: [PerAppShortcutOverride]
     private let userDefaults: UserDefaults
 
     private static let isGloballyEnabledDefaultsKey = "cotabbyGloballyEnabled"
@@ -130,6 +146,8 @@ final class SuggestionSettingsModel: ObservableObject {
     private static let terminalAcceptanceKeyCodeDefaultsKey = "cotabbyTerminalAcceptanceKeyCode"
     private static let terminalAcceptanceKeyModifiersDefaultsKey = "cotabbyTerminalAcceptanceKeyModifiers"
     private static let terminalAcceptanceKeyLabelDefaultsKey = "cotabbyTerminalAcceptanceKeyLabel"
+    private static let perAppShortcutOverridesDefaultsKey = "cotabbyPerAppShortcutOverrides"
+    private static let claudeCodeTuiExperimentEnabledDefaultsKey = "cotabbyClaudeCodeTuiExperimentEnabled"
 
     static let defaultAcceptanceKeyCode: CGKeyCode = 48
     static let defaultAcceptanceKeyLabel = "Tab"
@@ -341,6 +359,11 @@ final class SuggestionSettingsModel: ObservableObject {
             .string(forKey: Self.terminalAcceptanceKeyLabelDefaultsKey)
             ?? Self.defaultTerminalAcceptanceKeyLabel
 
+        let resolvedPerAppShortcutOverrides = Self.loadPerAppShortcutOverrides(from: userDefaults)
+
+        let resolvedClaudeCodeTuiExperimentEnabled =
+            userDefaults.object(forKey: Self.claudeCodeTuiExperimentEnabledDefaultsKey) as? Bool ?? false
+
         isGloballyEnabled = resolvedGloballyEnabled
         disabledAppRules = resolvedDisabledAppRules
         showIndicator = resolvedShowIndicator
@@ -379,6 +402,8 @@ final class SuggestionSettingsModel: ObservableObject {
         terminalAcceptanceKeyCode = resolvedTerminalAcceptanceKeyCode
         terminalAcceptanceKeyModifiers = resolvedTerminalAcceptanceKeyModifiers
         terminalAcceptanceKeyLabel = resolvedTerminalAcceptanceKeyLabel
+        perAppShortcutOverrides = resolvedPerAppShortcutOverrides
+        isClaudeCodeTuiExperimentEnabled = resolvedClaudeCodeTuiExperimentEnabled
 
         userDefaults.set(resolvedGloballyEnabled, forKey: Self.isGloballyEnabledDefaultsKey)
         persistDisabledAppRules(resolvedDisabledAppRules)
@@ -427,6 +452,11 @@ final class SuggestionSettingsModel: ObservableObject {
         )
         userDefaults.set(resolvedTerminalAcceptanceKeyLabel, forKey: Self.terminalAcceptanceKeyLabelDefaultsKey)
         userDefaults.set(resolvedAcceptanceGranularity.rawValue, forKey: Self.acceptanceGranularityDefaultsKey)
+        persistPerAppShortcutOverrides(resolvedPerAppShortcutOverrides)
+        userDefaults.set(
+            resolvedClaudeCodeTuiExperimentEnabled,
+            forKey: Self.claudeCodeTuiExperimentEnabledDefaultsKey
+        )
 
         // The custom indicator icon feature was removed; scrub any previously-persisted PNG so
         // users who picked one in an older build get the default cat icon back automatically.
@@ -723,6 +753,52 @@ final class SuggestionSettingsModel: ObservableObject {
         acceptanceKeyCode == Self.disabledKeyCode ? nil : acceptanceKeyLabel
     }
 
+    /// Like `acceptanceHintLabel` but resolves against the per-app override for `bundleIdentifier`.
+    /// When no override applies, returns the global hint so existing behavior is preserved. Used by
+    /// the overlay so the ghost-text keycap teaches the key that will actually fire in *this* app,
+    /// not the key bound globally — without this, a per-app override is invisible until the user
+    /// presses the wrong key and wonders why nothing happened.
+    func resolvedAcceptanceHintLabel(
+        forBundleIdentifier bundleIdentifier: String?,
+        isShellSurface: Bool = false
+    ) -> String? {
+        guard showAcceptanceHint else { return nil }
+
+        // Highest precedence mirrors InputMonitor's event-time resolution exactly: on a shell
+        // surface (known terminal, or an embedded-terminal host with a live shell session) the
+        // TERMINAL accept key is what actually fires. Teaching the global key there is actively
+        // harmful — Tab belongs to shell/TUI completion, so the pill would advertise a key that
+        // does something else entirely. NO fall-through to the global label: the monitor
+        // resolves the terminal binding unconditionally on shell surfaces, so when the user
+        // unbinds it the honest hint is "no key" (nil), not a key that won't fire.
+        if isTerminalIntegrationEnabled,
+           isShellSurface || TerminalAppDetector.isTerminal(bundleIdentifier: bundleIdentifier) {
+            return terminalAcceptanceKeyCode != Self.disabledKeyCode ? terminalAcceptanceKeyLabel : nil
+        }
+
+        let accept = ShortcutResolver.acceptBinding(
+            frontmostBundleIdentifier: bundleIdentifier,
+            overrides: perAppShortcutOverrides,
+            globalKeyCode: acceptanceKeyCode,
+            globalModifiers: acceptanceKeyModifiers,
+            globalLabel: acceptanceKeyLabel
+        )
+        if accept.keyCode != Self.disabledKeyCode {
+            return accept.label
+        }
+        let fullAccept = ShortcutResolver.fullAcceptBinding(
+            frontmostBundleIdentifier: bundleIdentifier,
+            overrides: perAppShortcutOverrides,
+            globalKeyCode: fullAcceptanceKeyCode,
+            globalModifiers: fullAcceptanceKeyModifiers,
+            globalLabel: fullAcceptanceKeyLabel
+        )
+        if fullAccept.keyCode != Self.disabledKeyCode {
+            return fullAccept.label
+        }
+        return nil
+    }
+
     func setCustomSuggestionTextColorHex(_ hex: String?) {
         let normalizedHex = Self.normalizedHexString(hex)
         guard customSuggestionTextColorHex != normalizedHex else {
@@ -926,6 +1002,134 @@ final class SuggestionSettingsModel: ObservableObject {
         setTerminalAcceptanceKey(keyCode: Self.disabledKeyCode, modifiers: [], label: Self.disabledKeyLabel)
     }
 
+    func setClaudeCodeTuiExperimentEnabled(_ enabled: Bool) {
+        guard isClaudeCodeTuiExperimentEnabled != enabled else { return }
+        isClaudeCodeTuiExperimentEnabled = enabled
+        userDefaults.set(enabled, forKey: Self.claudeCodeTuiExperimentEnabledDefaultsKey)
+    }
+
+    /// Fast lookup used by `ShortcutResolver` at event time. The array is small (one row per app
+    /// the user customized) so a linear scan is fine; we avoid materializing a dictionary on every
+    /// access because the published array is replaced on every mutation.
+    func perAppShortcutOverride(forBundleIdentifier bundleIdentifier: String?) -> PerAppShortcutOverride? {
+        guard let normalized = Self.normalizedBundleIdentifier(bundleIdentifier) else {
+            return nil
+        }
+        return perAppShortcutOverrides.first { $0.bundleIdentifier == normalized }
+    }
+
+    /// Replaces (or inserts) the accept-word binding for one app. Pass the disabled sentinel
+    /// `(SuggestionSettingsModel.disabledKeyCode, [], "None")` to bind "no key accepts in this app";
+    /// pass anything else for a real combo. To restore the global fallback, call
+    /// `clearPerAppAcceptKey` instead — that nils out the override so the resolver re-inherits.
+    func setPerAppAcceptKey(
+        bundleIdentifier: String,
+        displayName: String,
+        keyCode: CGKeyCode,
+        modifiers: ShortcutModifierMask,
+        label: String
+    ) {
+        guard let normalizedBundleIdentifier = Self.normalizedBundleIdentifier(bundleIdentifier) else {
+            return
+        }
+        let normalizedModifiers = keyCode == Self.disabledKeyCode ? [] : modifiers
+        let normalizedDisplayName = Self.normalizedDisplayName(
+            displayName,
+            fallbackBundleIdentifier: normalizedBundleIdentifier
+        )
+
+        var override = existingPerAppOverride(bundleIdentifier: normalizedBundleIdentifier)
+            ?? PerAppShortcutOverride(bundleIdentifier: normalizedBundleIdentifier, displayName: normalizedDisplayName)
+        override.displayName = normalizedDisplayName
+        override.acceptKeyCode = keyCode
+        override.acceptKeyModifiers = normalizedModifiers
+        override.acceptKeyLabel = label
+
+        upsertPerAppOverride(override)
+    }
+
+    /// Clears just the accept-word override for one app. If the row also has no full-accept
+    /// override left, the row itself is removed so the resolver re-inherits the global pair.
+    func clearPerAppAcceptKey(bundleIdentifier: String) {
+        guard let normalizedBundleIdentifier = Self.normalizedBundleIdentifier(bundleIdentifier),
+              var override = existingPerAppOverride(bundleIdentifier: normalizedBundleIdentifier) else {
+            return
+        }
+        override.acceptKeyCode = nil
+        override.acceptKeyModifiers = nil
+        override.acceptKeyLabel = nil
+        upsertPerAppOverride(override)
+    }
+
+    func setPerAppFullAcceptKey(
+        bundleIdentifier: String,
+        displayName: String,
+        keyCode: CGKeyCode,
+        modifiers: ShortcutModifierMask,
+        label: String
+    ) {
+        guard let normalizedBundleIdentifier = Self.normalizedBundleIdentifier(bundleIdentifier) else {
+            return
+        }
+        let normalizedModifiers = keyCode == Self.disabledKeyCode ? [] : modifiers
+        let normalizedDisplayName = Self.normalizedDisplayName(
+            displayName,
+            fallbackBundleIdentifier: normalizedBundleIdentifier
+        )
+
+        var override = existingPerAppOverride(bundleIdentifier: normalizedBundleIdentifier)
+            ?? PerAppShortcutOverride(bundleIdentifier: normalizedBundleIdentifier, displayName: normalizedDisplayName)
+        override.displayName = normalizedDisplayName
+        override.fullAcceptKeyCode = keyCode
+        override.fullAcceptKeyModifiers = normalizedModifiers
+        override.fullAcceptKeyLabel = label
+
+        upsertPerAppOverride(override)
+    }
+
+    func clearPerAppFullAcceptKey(bundleIdentifier: String) {
+        guard let normalizedBundleIdentifier = Self.normalizedBundleIdentifier(bundleIdentifier),
+              var override = existingPerAppOverride(bundleIdentifier: normalizedBundleIdentifier) else {
+            return
+        }
+        override.fullAcceptKeyCode = nil
+        override.fullAcceptKeyModifiers = nil
+        override.fullAcceptKeyLabel = nil
+        upsertPerAppOverride(override)
+    }
+
+    /// Drops the row for `bundleIdentifier` entirely — both accept fields revert to the global
+    /// binding. UI exposes this as "Reset to global" so the fallback path is a first-class action.
+    func removePerAppOverride(bundleIdentifier: String) {
+        guard let normalizedBundleIdentifier = Self.normalizedBundleIdentifier(bundleIdentifier) else {
+            return
+        }
+        let updated = perAppShortcutOverrides.filter { $0.bundleIdentifier != normalizedBundleIdentifier }
+        guard perAppShortcutOverrides != updated else { return }
+        perAppShortcutOverrides = updated
+        persistPerAppShortcutOverrides(updated)
+    }
+
+    private func existingPerAppOverride(bundleIdentifier: String) -> PerAppShortcutOverride? {
+        perAppShortcutOverrides.first { $0.bundleIdentifier == bundleIdentifier }
+    }
+
+    /// Upserts `override` into the sorted, deduped list. An override that has nilled out both
+    /// accept fields is removed from the store so the resolver naturally falls back to global —
+    /// the array never holds rows that decode to a no-op.
+    private func upsertPerAppOverride(_ override: PerAppShortcutOverride) {
+        var byBundle = Dictionary(uniqueKeysWithValues: perAppShortcutOverrides.map { ($0.bundleIdentifier, $0) })
+        if override.isEmpty {
+            byBundle.removeValue(forKey: override.bundleIdentifier)
+        } else {
+            byBundle[override.bundleIdentifier] = override
+        }
+        let updated = Self.sortedPerAppShortcutOverrides(Array(byBundle.values))
+        guard perAppShortcutOverrides != updated else { return }
+        perAppShortcutOverrides = updated
+        persistPerAppShortcutOverrides(updated)
+    }
+
     // All stored state is thread-safe to release (Combine subjects, UserDefaults). The
     // nonisolated deinit prevents Swift from scheduling the teardown through the
     // back-deployment main-actor executor shim, which has a StopLookupScope bug on macOS 26.
@@ -962,6 +1166,54 @@ final class SuggestionSettingsModel: ObservableObject {
         return nil
     }
 
+    /// Per-app conflict scoping. A per-app override is only checked against the **same app's**
+    /// other binding (accept-word vs accept-entire) and against the **global** toggle/terminal
+    /// keys, never against unrelated apps. Two different apps may legitimately bind the same
+    /// combo: the resolver picks the right one at event time based on the frontmost bundle id, so
+    /// there is no ambiguity at the tap layer.
+    ///
+    /// `excluding` is the action the user is currently re-recording in *this* app, so we never
+    /// flag an in-place edit as colliding with its own existing binding.
+    func conflictingPerAppShortcutName(
+        forBundleIdentifier bundleIdentifier: String,
+        keyCode: CGKeyCode,
+        modifiers: ShortcutModifierMask,
+        excluding action: ShortcutAction
+    ) -> String? {
+        guard keyCode != Self.disabledKeyCode else { return nil }
+
+        // Same-app check: only consult the other accept binding on the same row. The full set of
+        // ShortcutAction cases includes the global toggle, which intentionally falls through to
+        // the global-only check below.
+        if let override = perAppShortcutOverride(forBundleIdentifier: bundleIdentifier) {
+            if action != .acceptWord,
+               let overrideKey = override.acceptKeyCode,
+               let overrideModifiers = override.acceptKeyModifiers,
+               overrideKey == keyCode,
+               overrideModifiers == modifiers {
+                return ShortcutAction.acceptWord.displayName
+            }
+            if action != .acceptEntireSuggestion,
+               let overrideKey = override.fullAcceptKeyCode,
+               let overrideModifiers = override.fullAcceptKeyModifiers,
+               overrideKey == keyCode,
+               overrideModifiers == modifiers {
+                return ShortcutAction.acceptEntireSuggestion.displayName
+            }
+        }
+
+        // Global toggle and terminal accept are app-spanning bindings — a per-app accept key that
+        // collides with either of them would still get eaten by the toggle/terminal tap, so we
+        // refuse the combo even though it isn't in `ShortcutAction` for per-app rows.
+        if globalToggleKeyCode == keyCode, globalToggleKeyModifiers == modifiers {
+            return ShortcutAction.toggleTabby.displayName
+        }
+        if terminalAcceptanceKeyCode == keyCode, terminalAcceptanceKeyModifiers == modifiers {
+            return "Terminal Accept"
+        }
+        return nil
+    }
+
     private func shortcutBinding(for action: ShortcutAction) -> (keyCode: CGKeyCode, modifiers: ShortcutModifierMask) {
         switch action {
         case .acceptWord:
@@ -970,6 +1222,8 @@ final class SuggestionSettingsModel: ObservableObject {
             return (fullAcceptanceKeyCode, fullAcceptanceKeyModifiers)
         case .toggleTabby:
             return (globalToggleKeyCode, globalToggleKeyModifiers)
+        case .terminalAccept:
+            return (terminalAcceptanceKeyCode, terminalAcceptanceKeyModifiers)
         }
     }
 
@@ -1138,6 +1392,67 @@ final class SuggestionSettingsModel: ObservableObject {
 
     private func persistResponseLanguages(_ languages: [String]) {
         userDefaults.set(languages, forKey: Self.responseLanguagesDefaultsKey)
+    }
+
+    private static func loadPerAppShortcutOverrides(from userDefaults: UserDefaults) -> [PerAppShortcutOverride] {
+        guard let data = userDefaults.data(forKey: Self.perAppShortcutOverridesDefaultsKey),
+              let decoded = try? JSONDecoder().decode([PerAppShortcutOverride].self, from: data)
+        else {
+            return []
+        }
+        return sanitizedPerAppShortcutOverrides(decoded)
+    }
+
+    /// Trim, dedupe, drop empty (no accept and no full-accept) entries, and normalize each
+    /// row's display name. Mirrors `sanitizedDisabledAppRules` so both stores have the same
+    /// "absent vs empty UserDefault" discipline and one decode-time hardening pass.
+    private static func sanitizedPerAppShortcutOverrides(
+        _ overrides: [PerAppShortcutOverride]
+    ) -> [PerAppShortcutOverride] {
+        var byBundle: [String: PerAppShortcutOverride] = [:]
+        for override in overrides {
+            guard let normalizedBundleIdentifier = normalizedBundleIdentifier(override.bundleIdentifier) else {
+                continue
+            }
+            guard !override.isEmpty else { continue }
+            var sanitized = override
+            sanitized = PerAppShortcutOverride(
+                bundleIdentifier: normalizedBundleIdentifier,
+                displayName: normalizedDisplayName(
+                    sanitized.displayName,
+                    fallbackBundleIdentifier: normalizedBundleIdentifier
+                ),
+                acceptKeyCode: sanitized.acceptKeyCode,
+                acceptKeyModifiers: sanitized.acceptKeyModifiers,
+                acceptKeyLabel: sanitized.acceptKeyLabel,
+                fullAcceptKeyCode: sanitized.fullAcceptKeyCode,
+                fullAcceptKeyModifiers: sanitized.fullAcceptKeyModifiers,
+                fullAcceptKeyLabel: sanitized.fullAcceptKeyLabel
+            )
+            byBundle[normalizedBundleIdentifier] = sanitized
+        }
+        return sortedPerAppShortcutOverrides(Array(byBundle.values))
+    }
+
+    private static func sortedPerAppShortcutOverrides(
+        _ overrides: [PerAppShortcutOverride]
+    ) -> [PerAppShortcutOverride] {
+        overrides.sorted {
+            if $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedSame {
+                return $0.bundleIdentifier < $1.bundleIdentifier
+            }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    private func persistPerAppShortcutOverrides(_ overrides: [PerAppShortcutOverride]) {
+        guard !overrides.isEmpty else {
+            userDefaults.removeObject(forKey: Self.perAppShortcutOverridesDefaultsKey)
+            return
+        }
+        if let data = try? JSONEncoder().encode(overrides) {
+            userDefaults.set(data, forKey: Self.perAppShortcutOverridesDefaultsKey)
+        }
     }
 
     private func persistDisabledAppRules(_ rules: [DisabledApplicationRule]) {

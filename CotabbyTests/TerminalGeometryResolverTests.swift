@@ -102,30 +102,6 @@ final class TerminalGeometryResolverTests: XCTestCase {
         XCTAssertEqual(rect.height, 24.0, accuracy: 0.01)
     }
 
-    // MARK: - fallbackCursorRect
-
-    func test_fallbackCursorRect_isNearBottomOfWindow() {
-        let rect = TerminalGeometryResolver.fallbackCursorRect(windowFrame: windowFrame)
-
-        // Should be in the bottom half of the window.
-        XCTAssertGreaterThan(rect.origin.y, windowFrame.midY)
-    }
-
-    func test_fallbackCursorRect_isInsideWindow() {
-        let rect = TerminalGeometryResolver.fallbackCursorRect(windowFrame: windowFrame)
-
-        XCTAssertGreaterThanOrEqual(rect.origin.x, windowFrame.minX)
-        XCTAssertLessThanOrEqual(rect.maxX, windowFrame.maxX)
-        XCTAssertLessThanOrEqual(rect.maxY, windowFrame.maxY)
-    }
-
-    func test_fallbackCursorRect_dimensionsMatchDefaultMetrics() {
-        let rect = TerminalGeometryResolver.fallbackCursorRect(windowFrame: windowFrame)
-
-        XCTAssertEqual(rect.width, metrics.cellWidth, accuracy: 0.01)
-        XCTAssertEqual(rect.height, metrics.cellHeight, accuracy: 0.01)
-    }
-
     // MARK: - defaultCellMetrics
 
     func test_defaultCellMetrics_areReasonable() {
