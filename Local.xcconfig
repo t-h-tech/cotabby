@@ -1,0 +1,9 @@
+// Tracked, secret-free signing config referenced by project.yml (configFiles).
+//
+// It must stay in the repo so `xcodegen generate` (and CI) always finds it — but it holds NO
+// team id itself, so nothing personal is baked into the tracked Cotabby.xcodeproj.
+//
+// Your personal Apple Development Team goes in `LocalTeam.xcconfig` (gitignored). Xcode follows
+// the optional include below at BUILD time, so signing works locally without rewriting the
+// shared project. Setup: `cp LocalTeam.xcconfig.example LocalTeam.xcconfig` and set your id.
+#include? "LocalTeam.xcconfig"
