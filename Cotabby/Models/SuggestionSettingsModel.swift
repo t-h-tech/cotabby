@@ -104,6 +104,14 @@ final class SuggestionSettingsModel: ObservableObject {
     @Published private(set) var autoAcceptTrailingPunctuation: Bool
     @Published private(set) var addSpaceAfterAccept: Bool
     @Published private(set) var streamSuggestionsWhileGenerating: Bool
+    /// Whether a newly shown suggestion fades in. Read live by `OverlayController` at present time, so
+    /// toggling it takes effect on the very next suggestion without any subscription bookkeeping. Not
+    /// part of `snapshot`: it never reaches generation, only the overlay renderer.
+    @Published private(set) var fadeInSuggestions: Bool
+    /// Duration of the fade-in ramp in seconds. Read live by `OverlayController` alongside
+    /// `fadeInSuggestions`, so dragging the speed slider takes effect on the next suggestion. Lower is
+    /// a faster fade. Like `fadeInSuggestions`, it never reaches generation, only the overlay renderer.
+    @Published private(set) var fadeInDurationSeconds: Double
     @Published private(set) var acceptanceKeyCode: CGKeyCode
     @Published private(set) var acceptanceKeyModifiers: ShortcutModifierMask
     @Published private(set) var acceptanceKeyLabel: String
@@ -146,6 +154,10 @@ final class SuggestionSettingsModel: ObservableObject {
     static let maximumGhostTextSizeMultiplier = SuggestionSettingsStore.maximumGhostTextSizeMultiplier
     static let defaultGhostTextSizeMultiplier = SuggestionSettingsStore.defaultGhostTextSizeMultiplier
     static let ghostTextSizeMultiplierStep = SuggestionSettingsStore.ghostTextSizeMultiplierStep
+    static let minimumFadeInDuration = SuggestionSettingsStore.minimumFadeInDuration
+    static let maximumFadeInDuration = SuggestionSettingsStore.maximumFadeInDuration
+    static let defaultFadeInDuration = SuggestionSettingsStore.defaultFadeInDuration
+    static let fadeInDurationStep = SuggestionSettingsStore.fadeInDurationStep
     static let maximumExtendedContextCharacters = SuggestionSettingsStore.maximumExtendedContextCharacters
 
     init(
@@ -259,6 +271,8 @@ final class SuggestionSettingsModel: ObservableObject {
         autoAcceptTrailingPunctuation = data.autoAcceptTrailingPunctuation
         addSpaceAfterAccept = data.addSpaceAfterAccept
         streamSuggestionsWhileGenerating = data.streamSuggestionsWhileGenerating
+        fadeInSuggestions = data.fadeInSuggestions
+        fadeInDurationSeconds = data.fadeInDurationSeconds
         acceptanceKeyCode = data.acceptanceKeyCode
         acceptanceKeyModifiers = data.acceptanceKeyModifiers
         acceptanceKeyLabel = data.acceptanceKeyLabel
@@ -614,6 +628,23 @@ final class SuggestionSettingsModel: ObservableObject {
         }
         streamSuggestionsWhileGenerating = enabled
         store.saveStreamSuggestionsWhileGenerating(enabled)
+    }
+
+    func setFadeInSuggestions(_ enabled: Bool) {
+        guard fadeInSuggestions != enabled else {
+            return
+        }
+        fadeInSuggestions = enabled
+        store.saveFadeInSuggestions(enabled)
+    }
+
+    func setFadeInDurationSeconds(_ seconds: Double) {
+        let clamped = SuggestionSettingsStore.clampedFadeInDuration(seconds)
+        guard fadeInDurationSeconds != clamped else {
+            return
+        }
+        fadeInDurationSeconds = clamped
+        store.saveFadeInDurationSeconds(clamped)
     }
 
     func setAcceptanceGranularity(_ granularity: AcceptanceGranularity) {
