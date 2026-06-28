@@ -34,6 +34,26 @@ struct PerAppShortcutOverride: Codable, Equatable, Identifiable, Sendable {
         acceptKeyCode == nil && fullAcceptKeyCode == nil
     }
 
+    /// A copy with any *partially*-specified binding collapsed back to "inherit global". Each binding
+    /// is a unit of (keyCode, modifiers, label) and `ShortcutResolver` only fires when all three are
+    /// present, so a row persisted with — say — a key code but no label would otherwise survive
+    /// `isEmpty`, appear in Settings, yet never fire at event time (a phantom override). Normalizing
+    /// on load keeps the stored shape matching exactly what the resolver honors.
+    var bindingsNormalized: PerAppShortcutOverride {
+        var normalized = self
+        if acceptKeyCode == nil || acceptKeyModifiers == nil || acceptKeyLabel == nil {
+            normalized.acceptKeyCode = nil
+            normalized.acceptKeyModifiers = nil
+            normalized.acceptKeyLabel = nil
+        }
+        if fullAcceptKeyCode == nil || fullAcceptKeyModifiers == nil || fullAcceptKeyLabel == nil {
+            normalized.fullAcceptKeyCode = nil
+            normalized.fullAcceptKeyModifiers = nil
+            normalized.fullAcceptKeyLabel = nil
+        }
+        return normalized
+    }
+
     /// Whether this row pins an accept key (i.e. the user explicitly chose one, including the
     /// "no key" sentinel for "this app should never accept word-by-word").
     var hasAcceptOverride: Bool { acceptKeyCode != nil }

@@ -104,41 +104,27 @@ final class CotabbyAppEnvironment {
         // global when no override matches. Installed here — after `focusModel` exists — because the
         // closures capture it weakly to read the fresh snapshot per keystroke. The poll-based
         // snapshot can briefly lag a fast app switch, the same race the evaluator above already has.
-        inputMonitor.acceptanceKeyCodeProvider = { [weak focusModel] in
-            ShortcutResolver.acceptBinding(
+        // Each binding resolves once, as a unit, so the key code and its modifiers always come from
+        // the same per-app/global resolution and the overrides are scanned at most once per binding.
+        inputMonitor.acceptanceBindingProvider = { [weak focusModel] in
+            let binding = ShortcutResolver.acceptBinding(
                 frontmostBundleIdentifier: focusModel?.snapshot.bundleIdentifier,
                 overrides: suggestionSettings.perAppShortcutOverrides,
                 globalKeyCode: suggestionSettings.acceptanceKeyCode,
                 globalModifiers: suggestionSettings.acceptanceKeyModifiers,
                 globalLabel: suggestionSettings.acceptanceKeyLabel
-            ).keyCode
+            )
+            return (binding.keyCode, binding.modifiers)
         }
-        inputMonitor.acceptanceKeyModifiersProvider = { [weak focusModel] in
-            ShortcutResolver.acceptBinding(
-                frontmostBundleIdentifier: focusModel?.snapshot.bundleIdentifier,
-                overrides: suggestionSettings.perAppShortcutOverrides,
-                globalKeyCode: suggestionSettings.acceptanceKeyCode,
-                globalModifiers: suggestionSettings.acceptanceKeyModifiers,
-                globalLabel: suggestionSettings.acceptanceKeyLabel
-            ).modifiers
-        }
-        inputMonitor.fullAcceptanceKeyCodeProvider = { [weak focusModel] in
-            ShortcutResolver.fullAcceptBinding(
+        inputMonitor.fullAcceptanceBindingProvider = { [weak focusModel] in
+            let binding = ShortcutResolver.fullAcceptBinding(
                 frontmostBundleIdentifier: focusModel?.snapshot.bundleIdentifier,
                 overrides: suggestionSettings.perAppShortcutOverrides,
                 globalKeyCode: suggestionSettings.fullAcceptanceKeyCode,
                 globalModifiers: suggestionSettings.fullAcceptanceKeyModifiers,
                 globalLabel: suggestionSettings.fullAcceptanceKeyLabel
-            ).keyCode
-        }
-        inputMonitor.fullAcceptanceKeyModifiersProvider = { [weak focusModel] in
-            ShortcutResolver.fullAcceptBinding(
-                frontmostBundleIdentifier: focusModel?.snapshot.bundleIdentifier,
-                overrides: suggestionSettings.perAppShortcutOverrides,
-                globalKeyCode: suggestionSettings.fullAcceptanceKeyCode,
-                globalModifiers: suggestionSettings.fullAcceptanceKeyModifiers,
-                globalLabel: suggestionSettings.fullAcceptanceKeyLabel
-            ).modifiers
+            )
+            return (binding.keyCode, binding.modifiers)
         }
         let appUpdateManager = AppUpdateManager()
         let welcomeCoordinator = WelcomeCoordinator(

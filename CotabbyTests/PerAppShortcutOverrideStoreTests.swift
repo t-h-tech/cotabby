@@ -143,6 +143,35 @@ final class PerAppShortcutOverrideStoreTests: XCTestCase {
         )
     }
 
+    /// A row persisted with a *partial* binding — a key code but no modifiers/label, which
+    /// `ShortcutResolver` would silently ignore — is collapsed to "inherit global" on load so it can't
+    /// show in Settings as a phantom that never fires. The well-formed full-accept binding on the same
+    /// row is preserved.
+    func test_sanitize_collapsesPartialBindingOnLoad() throws {
+        let suiteName = makeSuiteName()
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let partial = PerAppShortcutOverride(
+            bundleIdentifier: "com.apple.notes",
+            displayName: "Notes",
+            acceptKeyCode: 49, acceptKeyModifiers: nil, acceptKeyLabel: nil,
+            fullAcceptKeyCode: 36, fullAcceptKeyModifiers: [.command], fullAcceptKeyLabel: "⌘Return"
+        )
+        let data = try JSONEncoder().encode([partial])
+        defaults.set(data, forKey: "cotabbyPerAppShortcutOverrides")
+
+        let model = SuggestionSettingsModel(configuration: .standard, userDefaults: defaults)
+        let restored = try XCTUnwrap(model.perAppShortcutOverrides.first)
+        // The partial accept binding collapses to inherit-global...
+        XCTAssertNil(restored.acceptKeyCode)
+        XCTAssertNil(restored.acceptKeyModifiers)
+        XCTAssertNil(restored.acceptKeyLabel)
+        // ...while the well-formed full-accept binding is preserved.
+        XCTAssertEqual(restored.fullAcceptKeyCode, 36)
+        XCTAssertEqual(restored.fullAcceptKeyModifiers, [.command])
+        XCTAssertEqual(restored.fullAcceptKeyLabel, "⌘Return")
+    }
+
     // MARK: - Helpers
 
     private func makeSuiteName() -> String {

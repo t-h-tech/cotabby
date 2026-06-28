@@ -862,9 +862,10 @@ struct SuggestionSettingsStore {
         return Self.sanitizedPerAppShortcutOverrides(decoded)
     }
 
-    /// Trim, dedupe by bundle id, drop empty (no accept and no full-accept) entries, and normalize
-    /// each row's display name. Mirrors `sanitizedDisabledAppRules` so both stores have the same
-    /// "absent vs empty UserDefault" discipline and one decode-time hardening pass.
+    /// Trim, dedupe by bundle id, collapse partial bindings to "inherit global", drop empty (no
+    /// accept and no full-accept) entries, and normalize each row's display name. Mirrors
+    /// `sanitizedDisabledAppRules` so both stores have the same "absent vs empty UserDefault"
+    /// discipline and one decode-time hardening pass.
     private static func sanitizedPerAppShortcutOverrides(
         _ overrides: [PerAppShortcutOverride]
     ) -> [PerAppShortcutOverride] {
@@ -874,20 +875,24 @@ struct SuggestionSettingsStore {
             guard let normalizedBundleIdentifier = normalizedBundleIdentifier(override.bundleIdentifier) else {
                 continue
             }
-            guard !override.isEmpty else { continue }
+            // Collapse any partial binding (e.g. a key code with no label) to "inherit global" before
+            // the empty check, so a phantom row that survives load but never fires in `ShortcutResolver`
+            // can't linger in Settings.
+            let normalized = override.bindingsNormalized
+            guard !normalized.isEmpty else { continue }
 
             byBundle[normalizedBundleIdentifier] = PerAppShortcutOverride(
                 bundleIdentifier: normalizedBundleIdentifier,
                 displayName: normalizedDisplayName(
-                    override.displayName,
+                    normalized.displayName,
                     fallbackBundleIdentifier: normalizedBundleIdentifier
                 ),
-                acceptKeyCode: override.acceptKeyCode,
-                acceptKeyModifiers: override.acceptKeyModifiers,
-                acceptKeyLabel: override.acceptKeyLabel,
-                fullAcceptKeyCode: override.fullAcceptKeyCode,
-                fullAcceptKeyModifiers: override.fullAcceptKeyModifiers,
-                fullAcceptKeyLabel: override.fullAcceptKeyLabel
+                acceptKeyCode: normalized.acceptKeyCode,
+                acceptKeyModifiers: normalized.acceptKeyModifiers,
+                acceptKeyLabel: normalized.acceptKeyLabel,
+                fullAcceptKeyCode: normalized.fullAcceptKeyCode,
+                fullAcceptKeyModifiers: normalized.fullAcceptKeyModifiers,
+                fullAcceptKeyLabel: normalized.fullAcceptKeyLabel
             )
         }
 
