@@ -71,6 +71,31 @@ final class ShortcutConflictTests: XCTestCase {
         XCTAssertNil(conflict)
     }
 
+    /// The reload-focus hotkey participates in conflict detection like every other action: a combo
+    /// it owns is reported against any other action being edited.
+    func test_conflict_flagsReloadFocusCollision() {
+        let model = makeModel()
+        model.setReloadFocusKey(keyCode: 49, modifiers: [], label: "Space")
+        let conflict = model.conflictingShortcutName(
+            keyCode: 49,
+            modifiers: [],
+            excluding: .toggleTabby
+        )
+        XCTAssertEqual(conflict, "Re-detect Focus")
+    }
+
+    /// Re-recording the reload-focus hotkey to its own current value is not a self-collision.
+    func test_conflict_excludesReloadFocusBeingEdited() {
+        let model = makeModel()
+        model.setReloadFocusKey(keyCode: 49, modifiers: [], label: "Space")
+        let conflict = model.conflictingShortcutName(
+            keyCode: 49,
+            modifiers: [],
+            excluding: .reloadFocus
+        )
+        XCTAssertNil(conflict)
+    }
+
     // MARK: - Per-app override scoping
 
     /// Per-app conflict scoping: two different apps can bind the same combo without conflict,
@@ -136,6 +161,20 @@ final class ShortcutConflictTests: XCTestCase {
             excluding: .acceptWord
         )
         XCTAssertEqual(conflict, "Terminal Accept")
+    }
+
+    /// The reload-focus hotkey is app-spanning too (head-inserted global tap), so a per-app accept
+    /// that collides with it would be eaten by the reload tap. Refuse the combo up front.
+    func test_perAppConflict_flagsReloadFocusCollision() {
+        let model = makeModel()
+        model.setReloadFocusKey(keyCode: 49, modifiers: [.command, .shift], label: "⌘⇧Space")
+        let conflict = model.conflictingPerAppShortcutName(
+            forBundleIdentifier: "com.apple.notes",
+            keyCode: 49,
+            modifiers: [.command, .shift],
+            excluding: .acceptWord
+        )
+        XCTAssertEqual(conflict, "Re-detect Focus")
     }
 
     /// Re-recording the same action on the same app must not be flagged as a self-collision.

@@ -12,6 +12,9 @@ enum ShortcutAction: CaseIterable, Equatable, Hashable {
     /// TUIs like Claude Code running inside them). A separate binding from `acceptWord` because
     /// Tab — the natural global accept — belongs to shell completion inside a terminal.
     case terminalAccept
+    /// Global hotkey that forces Cotabby to re-detect the focused field's source (AX text field
+    /// vs terminal shell prompt vs Claude Code TUI), clearing any stale injected/cached state.
+    case reloadFocus
 
     var displayName: String {
         switch self {
@@ -19,6 +22,7 @@ enum ShortcutAction: CaseIterable, Equatable, Hashable {
         case .acceptEntireSuggestion: return "Accept Entire Suggestion"
         case .toggleTabby: return "Toggle Tabby"
         case .terminalAccept: return "Terminal Accept"
+        case .reloadFocus: return "Re-detect Focus"
         }
     }
 }
@@ -81,6 +85,11 @@ final class SuggestionSettingsModel: ObservableObject {
     @Published private(set) var globalToggleKeyCode: CGKeyCode
     @Published private(set) var globalToggleKeyModifiers: ShortcutModifierMask
     @Published private(set) var globalToggleKeyLabel: String
+    /// User-configurable hotkey that forces a focus re-detection (clears stale terminal/TUI
+    /// injections and re-reads the focused element). Defaults to unbound; opt-in like the toggle.
+    @Published private(set) var reloadFocusKeyCode: CGKeyCode
+    @Published private(set) var reloadFocusKeyModifiers: ShortcutModifierMask
+    @Published private(set) var reloadFocusKeyLabel: String
     @Published private(set) var acceptanceGranularity: AcceptanceGranularity
     /// Whether the shell-integration-based terminal autocomplete subsystem is active.
     @Published private(set) var isTerminalIntegrationEnabled: Bool
@@ -141,6 +150,9 @@ final class SuggestionSettingsModel: ObservableObject {
     private static let globalToggleKeyCodeDefaultsKey = "cotabbyGlobalToggleKeyCode"
     private static let globalToggleKeyModifiersDefaultsKey = "cotabbyGlobalToggleKeyModifiers"
     private static let globalToggleKeyLabelDefaultsKey = "cotabbyGlobalToggleKeyLabel"
+    private static let reloadFocusKeyCodeDefaultsKey = "cotabbyReloadFocusKeyCode"
+    private static let reloadFocusKeyModifiersDefaultsKey = "cotabbyReloadFocusKeyModifiers"
+    private static let reloadFocusKeyLabelDefaultsKey = "cotabbyReloadFocusKeyLabel"
     private static let acceptanceGranularityDefaultsKey = "cotabbyAcceptanceGranularity"
     private static let terminalIntegrationEnabledDefaultsKey = "cotabbyTerminalIntegrationEnabled"
     private static let terminalAcceptanceKeyCodeDefaultsKey = "cotabbyTerminalAcceptanceKeyCode"
@@ -335,6 +347,16 @@ final class SuggestionSettingsModel: ObservableObject {
         )
         let resolvedGlobalToggleKeyLabel = userDefaults.string(forKey: Self.globalToggleKeyLabelDefaultsKey)
             ?? Self.disabledKeyLabel
+        // Reload-focus hotkey: same opt-in, unbound-by-default contract as the global toggle.
+        let resolvedReloadFocusKeyCode = CGKeyCode(
+            userDefaults.object(forKey: Self.reloadFocusKeyCodeDefaultsKey) as? Int
+                ?? Int(Self.disabledKeyCode)
+        )
+        let resolvedReloadFocusKeyModifiers = ShortcutModifierMask(
+            rawValue: UInt32(userDefaults.object(forKey: Self.reloadFocusKeyModifiersDefaultsKey) as? Int ?? 0)
+        )
+        let resolvedReloadFocusKeyLabel = userDefaults.string(forKey: Self.reloadFocusKeyLabelDefaultsKey)
+            ?? Self.disabledKeyLabel
         // Default `.word` preserves the pre-feature behavior for existing installs that have no
         // value persisted yet. Invalid persisted values fall back to `.word` rather than crashing
         // so a hand-edited UserDefault can't strand the user.
@@ -397,6 +419,9 @@ final class SuggestionSettingsModel: ObservableObject {
         globalToggleKeyCode = resolvedGlobalToggleKeyCode
         globalToggleKeyModifiers = resolvedGlobalToggleKeyModifiers
         globalToggleKeyLabel = resolvedGlobalToggleKeyLabel
+        reloadFocusKeyCode = resolvedReloadFocusKeyCode
+        reloadFocusKeyModifiers = resolvedReloadFocusKeyModifiers
+        reloadFocusKeyLabel = resolvedReloadFocusKeyLabel
         acceptanceGranularity = resolvedAcceptanceGranularity
         isTerminalIntegrationEnabled = resolvedTerminalIntegrationEnabled
         terminalAcceptanceKeyCode = resolvedTerminalAcceptanceKeyCode
@@ -444,6 +469,12 @@ final class SuggestionSettingsModel: ObservableObject {
             forKey: Self.globalToggleKeyModifiersDefaultsKey
         )
         userDefaults.set(resolvedGlobalToggleKeyLabel, forKey: Self.globalToggleKeyLabelDefaultsKey)
+        userDefaults.set(Int(resolvedReloadFocusKeyCode), forKey: Self.reloadFocusKeyCodeDefaultsKey)
+        userDefaults.set(
+            Int(resolvedReloadFocusKeyModifiers.rawValue),
+            forKey: Self.reloadFocusKeyModifiersDefaultsKey
+        )
+        userDefaults.set(resolvedReloadFocusKeyLabel, forKey: Self.reloadFocusKeyLabelDefaultsKey)
         userDefaults.set(resolvedTerminalIntegrationEnabled, forKey: Self.terminalIntegrationEnabledDefaultsKey)
         userDefaults.set(Int(resolvedTerminalAcceptanceKeyCode), forKey: Self.terminalAcceptanceKeyCodeDefaultsKey)
         userDefaults.set(
@@ -975,6 +1006,27 @@ final class SuggestionSettingsModel: ObservableObject {
         setGlobalToggleKey(keyCode: Self.disabledKeyCode, modifiers: [], label: Self.disabledKeyLabel)
     }
 
+    func setReloadFocusKey(keyCode: CGKeyCode, modifiers: ShortcutModifierMask, label: String) {
+        let normalizedModifiers = keyCode == Self.disabledKeyCode ? [] : modifiers
+        guard reloadFocusKeyCode != keyCode
+            || reloadFocusKeyModifiers != normalizedModifiers
+            || reloadFocusKeyLabel != label
+        else {
+            return
+        }
+
+        reloadFocusKeyCode = keyCode
+        reloadFocusKeyModifiers = normalizedModifiers
+        reloadFocusKeyLabel = label
+        userDefaults.set(Int(keyCode), forKey: Self.reloadFocusKeyCodeDefaultsKey)
+        userDefaults.set(Int(normalizedModifiers.rawValue), forKey: Self.reloadFocusKeyModifiersDefaultsKey)
+        userDefaults.set(label, forKey: Self.reloadFocusKeyLabelDefaultsKey)
+    }
+
+    func clearReloadFocusKey() {
+        setReloadFocusKey(keyCode: Self.disabledKeyCode, modifiers: [], label: Self.disabledKeyLabel)
+    }
+
     func setTerminalIntegrationEnabled(_ enabled: Bool) {
         guard isTerminalIntegrationEnabled != enabled else { return }
         isTerminalIntegrationEnabled = enabled
@@ -1211,6 +1263,9 @@ final class SuggestionSettingsModel: ObservableObject {
         if terminalAcceptanceKeyCode == keyCode, terminalAcceptanceKeyModifiers == modifiers {
             return "Terminal Accept"
         }
+        if reloadFocusKeyCode == keyCode, reloadFocusKeyModifiers == modifiers {
+            return ShortcutAction.reloadFocus.displayName
+        }
         return nil
     }
 
@@ -1224,6 +1279,8 @@ final class SuggestionSettingsModel: ObservableObject {
             return (globalToggleKeyCode, globalToggleKeyModifiers)
         case .terminalAccept:
             return (terminalAcceptanceKeyCode, terminalAcceptanceKeyModifiers)
+        case .reloadFocus:
+            return (reloadFocusKeyCode, reloadFocusKeyModifiers)
         }
     }
 

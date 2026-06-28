@@ -274,6 +274,9 @@ struct AppsPaneView: View {
         case .terminalAccept:
             // Shell accept is a global shell-surface binding; per-app overrides do not carry it.
             return suggestionSettings.terminalAcceptanceKeyLabel
+        case .reloadFocus:
+            // Reload-focus is global-only too; per-app overrides do not carry it.
+            return suggestionSettings.reloadFocusKeyLabel
         }
     }
 
@@ -287,6 +290,8 @@ struct AppsPaneView: View {
             return suggestionSettings.globalToggleKeyCode
         case .terminalAccept:
             return suggestionSettings.terminalAcceptanceKeyCode
+        case .reloadFocus:
+            return suggestionSettings.reloadFocusKeyCode
         }
     }
 
@@ -303,6 +308,8 @@ struct AppsPaneView: View {
             return suggestionSettings.globalToggleKeyModifiers
         case .terminalAccept:
             return suggestionSettings.terminalAcceptanceKeyModifiers
+        case .reloadFocus:
+            return suggestionSettings.reloadFocusKeyModifiers
         }
     }
 
@@ -337,6 +344,9 @@ struct AppsPaneView: View {
         case .terminalAccept:
             // Shell accept is likewise global-only: it follows the shell surface, not the app.
             break
+        case .reloadFocus:
+            // Reload-focus is global-only: there is no per-app reload binding.
+            break
         }
     }
 
@@ -349,6 +359,8 @@ struct AppsPaneView: View {
         case .toggleTabby:
             break
         case .terminalAccept:
+            break
+        case .reloadFocus:
             break
         }
     }

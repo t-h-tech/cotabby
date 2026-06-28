@@ -10,6 +10,7 @@ struct ShortcutsPaneView: View {
     @State private var isRecordingFullAcceptKeybind = false
     @State private var isRecordingGlobalToggleKeybind = false
     @State private var isRecordingTerminalAcceptKeybind = false
+    @State private var isRecordingReloadFocusKeybind = false
 
     var body: some View {
         SettingsPaneScaffold {
@@ -164,6 +165,39 @@ struct ShortcutsPaneView: View {
                     SettingsRowLabel(
                         title: "Toggle Tabby",
                         description: "Turn Cotabby on or off globally without opening the menu bar."
+                    )
+                }
+
+                // Opt-in like the toggle above: no factory default, so `onReset: nil` hides Reset.
+                LabeledContent {
+                    KeybindRow(
+                        label: suggestionSettings.reloadFocusKeyLabel,
+                        keyCode: suggestionSettings.reloadFocusKeyCode,
+                        modifiers: suggestionSettings.reloadFocusKeyModifiers,
+                        defaultKeyCode: SuggestionSettingsModel.disabledKeyCode,
+                        isRecording: $isRecordingReloadFocusKeybind,
+                        onRecord: { keyCode, modifiers, label in
+                            suggestionSettings.setReloadFocusKey(
+                                keyCode: keyCode,
+                                modifiers: modifiers,
+                                label: label
+                            )
+                        },
+                        onReset: nil,
+                        onClear: { suggestionSettings.clearReloadFocusKey() },
+                        clearHelp: "Unbind this shortcut. No key will force a focus re-detection.",
+                        conflictChecker: { keyCode, modifiers in
+                            suggestionSettings.conflictingShortcutName(
+                                keyCode: keyCode,
+                                modifiers: modifiers,
+                                excluding: .reloadFocus
+                            )
+                        }
+                    )
+                } label: {
+                    SettingsRowLabel(
+                        title: "Re-detect Focus",
+                        description: "Recheck if the focused field is a terminal/TUI vs a text field, when Cotabby picks wrong."
                     )
                 }
             }
