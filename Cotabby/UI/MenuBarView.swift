@@ -23,6 +23,9 @@ struct MenuBarView: View {
     let appUpdateManager: AppUpdateManager
     let onOpenSettings: () -> Void
     let onReportFeedback: () -> Void
+    /// Forces a focus re-detection (clears stale terminal/TUI injections and re-reads focus). Same
+    /// action as the optional reload hotkey, surfaced here so it's reachable without binding a key.
+    let onReloadFocus: () -> Void
 
     /// Captures the popover's host window so `Button` actions that open another window can dismiss
     /// the popover behind them. SwiftUI's `\.dismiss` does not work for `MenuBarExtra(.window)`.
@@ -104,6 +107,17 @@ struct MenuBarView: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 }
+
+                // Manual escape hatch when Cotabby latched onto the wrong source (e.g. an editor AX
+                // field instead of the shell/TUI). Same action as the optional reload hotkey.
+                Button {
+                    onReloadFocus()
+                } label: {
+                    Label("Re-detect Focus", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("Recheck the focused field's source if Cotabby picked the wrong one (terminal/TUI vs text field).")
             }
 
             Divider()

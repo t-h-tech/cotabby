@@ -33,6 +33,9 @@ struct CotabbyApp: App {
                     // (Cotabby + macOS + hardware) and the user only has to write the actual report.
                     let url = DeviceInfo.snapshot().appending(to: baseURL)
                     NSWorkspace.shared.open(url)
+                },
+                onReloadFocus: {
+                    appDelegate.reloadFocusDetection()
                 }
             )
         } label: {

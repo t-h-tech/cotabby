@@ -88,6 +88,18 @@ final class InputMonitor {
     /// `isGloballyEnabled` setting; the keystroke is then consumed so the host app never sees it.
     var onGlobalToggleHotkey: (@MainActor () -> Void)?
 
+    /// Reads the reload-focus hotkey at event time. `disabledKeyCode` (UInt16.max) means unbound;
+    /// the dedicated tap is torn down whenever the provider returns that sentinel, so an unbound
+    /// hotkey costs nothing per keystroke.
+    var reloadFocusKeyCodeProvider: @MainActor () -> CGKeyCode = { CGKeyCode(UInt16.max) }
+
+    /// Modifier mask required alongside the reload-focus hotkey. Empty means the bare key.
+    var reloadFocusKeyModifiersProvider: @MainActor () -> ShortcutModifierMask = { [] }
+
+    /// Fired when a key event matches the configured reload-focus hotkey. Wired to force a focus
+    /// re-detection; the keystroke is then consumed so the host app never sees it.
+    var onReloadFocusHotkey: (@MainActor () -> Void)?
+
     /// When false, the observer passes keystrokes through without classifying or notifying the
     /// coordinator. This eliminates per-keystroke overhead in apps where Cotabby will never act
     /// (terminals, globally disabled, per-app disabled).
@@ -116,6 +128,11 @@ final class InputMonitor {
     /// disabled, since the whole purpose of the hotkey is to flip that switch back on.
     private var toggleTap: CFMachPort?
     private var toggleRunLoopSource: CFRunLoopSource?
+
+    /// Dedicated consuming tap for the reload-focus hotkey. Independent of the other taps (like the
+    /// toggle tap) because it must fire even when no suggestion is visible.
+    private var reloadFocusTap: CFMachPort?
+    private var reloadFocusRunLoopSource: CFRunLoopSource?
 
     /// Tracks whether the consuming tap currently owns accept-key semantics. This is separate
     /// from "a suggestion exists": the observer should only suppress accept-key callbacks when a
@@ -154,6 +171,7 @@ final class InputMonitor {
         CotabbyLogger.app.info("Input monitor stopping")
         destroyAcceptTap()
         destroyToggleTap()
+        destroyReloadFocusTap()
         destroyObserverTap()
     }
 
@@ -164,9 +182,11 @@ final class InputMonitor {
         if permissionProvider() {
             installObserverTapIfNeeded()
             refreshToggleTap()
+            refreshReloadFocusTap()
         } else {
             destroyAcceptTap()
             destroyToggleTap()
+            destroyReloadFocusTap()
             destroyObserverTap()
         }
     }
@@ -183,6 +203,21 @@ final class InputMonitor {
             destroyToggleTap()
         } else {
             installToggleTapIfNeeded()
+        }
+    }
+
+    /// Installs or removes the reload-focus tap to match the current binding. Mirror of
+    /// `refreshToggleTap()`; called by the environment whenever the user changes or clears the
+    /// reload hotkey so the tap's lifetime tracks "binding exists".
+    func refreshReloadFocusTap() {
+        guard permissionProvider() else {
+            destroyReloadFocusTap()
+            return
+        }
+        if reloadFocusKeyCodeProvider() == Self.disabledKeyCode {
+            destroyReloadFocusTap()
+        } else {
+            installReloadFocusTapIfNeeded()
         }
     }
 
@@ -375,6 +410,49 @@ final class InputMonitor {
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 
+    private func installReloadFocusTapIfNeeded() {
+        guard reloadFocusTap == nil else {
+            return
+        }
+
+        let mask = (1 << CGEventType.keyDown.rawValue)
+        let callback: CGEventTapCallBack = { _, type, event, userInfo in
+            guard let userInfo else {
+                return Unmanaged.passUnretained(event)
+            }
+
+            let monitor = Unmanaged<InputMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+            return MainActor.assumeIsolated {
+                monitor.handleReloadFocusTap(type: type, event: event)
+            }
+        }
+
+        // Head-inserted, like the toggle tap: the callback returns `nil` only on a bound-hotkey
+        // match, so unrelated keys drain through to the rest of the chain unchanged.
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(mask),
+            callback: callback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else {
+            CotabbyLogger.app.warning("Failed to create CGEvent reload-focus tap")
+            return
+        }
+        CotabbyLogger.app.info("CGEvent reload-focus tap installed (active, reload-hotkey only)")
+
+        reloadFocusTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        reloadFocusRunLoopSource = source
+
+        if let source {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
     private func destroyObserverTap() {
         if let source = observerRunLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
@@ -420,6 +498,22 @@ final class InputMonitor {
         CotabbyLogger.app.info("CGEvent toggle tap removed")
     }
 
+    private func destroyReloadFocusTap() {
+        guard reloadFocusTap != nil || reloadFocusRunLoopSource != nil else {
+            return
+        }
+        if let source = reloadFocusRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        reloadFocusRunLoopSource = nil
+
+        if let tap = reloadFocusTap {
+            CFMachPortInvalidate(tap)
+        }
+        reloadFocusTap = nil
+        CotabbyLogger.app.info("CGEvent reload-focus tap removed")
+    }
+
     /// Active toggle tap: consumes a keystroke only when it matches the configured global-toggle
     /// hotkey. The match is intentionally evaluated against the providers (not a cached snapshot)
     /// so a settings change is picked up on the very next keystroke. Runs independently of
@@ -452,6 +546,44 @@ final class InputMonitor {
 
             onGlobalToggleHotkey?()
             CotabbyLogger.app.debug("Toggle tap consumed keyCode=\(keyCode) modifiers=\(modifiers.rawValue)")
+            return nil
+
+        default:
+            return Unmanaged.passUnretained(event)
+        }
+    }
+
+    /// Active reload-focus tap: consumes a keystroke only when it matches the configured reload
+    /// hotkey, then fires `onReloadFocusHotkey`. Evaluated against the providers (not a cached
+    /// snapshot) so a settings change is picked up on the next keystroke. Mirror of
+    /// `handleToggleTap`.
+    func handleReloadFocusTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        switch type {
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            CotabbyLogger.app.warning("Reload-focus tap was disabled by system, re-enabling")
+            if let reloadFocusTap {
+                CGEvent.tapEnable(tap: reloadFocusTap, enable: true)
+            }
+            return Unmanaged.passUnretained(event)
+
+        case .keyDown:
+            if suppressionController.isSynthetic(event) {
+                return Unmanaged.passUnretained(event)
+            }
+
+            let bound = reloadFocusKeyCodeProvider()
+            guard bound != Self.disabledKeyCode else {
+                return Unmanaged.passUnretained(event)
+            }
+
+            let keyCode = keyCode(from: event)
+            let modifiers = ShortcutModifierMask(eventFlags: event.flags)
+            guard keyCode == bound, modifiers == reloadFocusKeyModifiersProvider() else {
+                return Unmanaged.passUnretained(event)
+            }
+
+            onReloadFocusHotkey?()
+            CotabbyLogger.app.debug("Reload-focus tap consumed keyCode=\(keyCode) modifiers=\(modifiers.rawValue)")
             return nil
 
         default:

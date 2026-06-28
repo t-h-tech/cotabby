@@ -42,6 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let activationIndicatorController: ActivationIndicatorController
     private let focusDebugOverlayController: FocusDebugOverlayController?
     private var cancellables = Set<AnyCancellable>()
+    /// Token for the app-activation observer that re-reads focus on app switch, so the
+    /// editor-protection guards don't keep serving a stale cached snapshot after the user switches
+    /// into a terminal/editor. Owned here (app-lifetime) rather than on the transient environment.
+    private var appActivationObserver: NSObjectProtocol?
     private var didStartServices = false
 
     override init() {
@@ -124,6 +128,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        // Reload-focus hotkey: pressing it forces a focus re-detection. Wired on the app delegate
+        // (not the transient environment) so the `[weak self]` capture stays valid for the session.
+        inputMonitor.onReloadFocusHotkey = { [weak self] in
+            self?.reloadFocusDetection()
+        }
+
+        // Install/uninstall the reload-focus tap when the user binds or clears the hotkey, so a
+        // user who never sets it pays no per-keystroke cost.
+        suggestionSettings.$reloadFocusKeyCode
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.inputMonitor.refreshReloadFocusTap()
+            }
+            .store(in: &cancellables)
+
+        // Re-read focus on app activation. Switching INTO an app (a terminal/editor) can leave a
+        // stale focus snapshot — the poll timer may not have re-read yet and the editor-protection
+        // guards key off the cached snapshot — so a fresh read here lets the correct source pick up
+        // without a manual reload. FocusTracker debounces by element identity, so this is cheap.
+        appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.focusModel.refreshNow()
+            }
+        }
     }
 
     /// Starts runtime and polling services once AppKit reports that app launch finished.
@@ -147,6 +179,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         welcomeCoordinator.presentPermissionReminderIfNeeded()
         didStartServices = true
         CotabbyLogger.app.info("All services started")
+    }
+
+    /// Force a full focus re-detection: discard stale terminal/TUI injections and cached AX state,
+    /// prune dead shell sessions, drop prompt anchors, re-read the focused element, and re-evaluate
+    /// availability. The manual escape hatch (reload hotkey + menu-bar item) for when Cotabby has
+    /// latched onto the wrong source — e.g. an editor AX field instead of the shell/TUI.
+    func reloadFocusDetection() {
+        CotabbyLogger.app.info("Reload focus requested — clearing injected state and re-detecting")
+        // Drop sessions for shells that have died (e.g. an app restart left a stale socket).
+        terminalIntegrationService.pruneStaleSessionsIfNeeded()
+        // Cancel any in-flight OCR and release a TUI-owned injection.
+        tuiContextCoordinator.cancelPending()
+        // Stop suppressing AX polls and republish the real focused-element snapshot.
+        focusModel.clearTerminalInjection()
+        // Drop stale prompt anchors so the next shell report re-OCRs geometry.
+        shellPromptGeometryCoordinator.invalidateAll()
+        // Force an immediate fresh AX read of whatever is focused right now.
+        focusModel.refreshNow()
+        // Re-evaluate whether suggestions should be active for the freshly-read environment.
+        suggestionCoordinator.reconcileWithCurrentEnvironment()
     }
 
     /// Synchronously releases native runtime resources before AppKit calls `exit()`.

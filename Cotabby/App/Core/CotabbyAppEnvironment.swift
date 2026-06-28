@@ -70,6 +70,10 @@ final class CotabbyAppEnvironment {
         inputMonitor.onGlobalToggleHotkey = { [weak suggestionSettings] in
             suggestionSettings?.toggleGloballyEnabled()
         }
+        // Reload-focus hotkey: providers read live from the model; the callback (which needs every
+        // terminal service) is wired below, once those services exist.
+        inputMonitor.reloadFocusKeyCodeProvider = { suggestionSettings.reloadFocusKeyCode }
+        inputMonitor.reloadFocusKeyModifiersProvider = { suggestionSettings.reloadFocusKeyModifiers }
         // Stop the deep AX walk when Cotabby is disabled for the focused app. Without this the
         // focus poll keeps enumerating the frontmost app's AX attributes every 50-80ms even after
         // the user toggles Cotabby off, which can dismiss transient popovers in apps like Calendar
